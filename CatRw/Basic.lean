@@ -90,15 +90,18 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
 
 private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResult := do
   let mut current := lhs
-  let mut iso ← mkReflIso lhs
+  let mut iso := none
   for rule in rules do
     let some result ← rewriteOnce rule current
       | throwError
           "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
           to{indentExpr current}"
-    iso ← mkAppM ``CategoryTheory.Iso.trans #[iso, result.iso]
+    if let some i := iso then
+      iso := some <| ← mkAppM ``CategoryTheory.Iso.trans #[i, result.iso]
+    else
+      iso := some <| result.iso
     current := result.newExpr
-  return { newExpr := current, iso }
+  return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
 
 private def closeIfRefl (goal : MVarId) (lhs rhs : Expr) : TacticM Bool := do
   let state ← saveState

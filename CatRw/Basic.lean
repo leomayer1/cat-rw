@@ -1,3 +1,4 @@
+import CatRw.Attr
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
 import Mathlib.CategoryTheory.Functor.EpiMono
@@ -51,17 +52,21 @@ structure IffRewriteResult where
   mkProof : Expr → MetaM Expr
 
 /--
-A list of lemmas that relate isomorphisms to logical equivalences (`Iff`).
-These are used when `cat_rw` is applied to a non-isomorphism goal.
-Examples include `Iso.isZero_iff : X ≅ Y → (IsZero X ↔ IsZero Y)`.
+The lemmas tagged with `@[cat_rw]`.
+
+Each tagged lemma should accept an isomorphism as its main explicit argument
+and return an iff whose left or right side is the current goal.
 -/
-private def isoIffLemmas : Array Name := #[
+private def defaultIsoIffLemmas : Array Name := #[
   ``CategoryTheory.Iso.isZero_iff,
   ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
   ``CategoryTheory.Functor.preservesEpimorphisms.iso_iff,
   ``CategoryTheory.Functor.isEquivalence_iff_of_iso,
   ``CategoryTheory.Functor.initial_natIso_iff
 ]
+
+private def getIsoIffLemmas : TacticM (Array Name) := do
+  return defaultIsoIffLemmas ++ catRwAttr.getDecls (← getEnv)
 
 /--
 Extracts the source and destination objects from an isomorphism's type.
@@ -121,7 +126,7 @@ private def mkFunctorObj (F X : Expr) : MetaM Expr :=
 
 /-- Creates a product of two objects `X ⨯ Y`. -/
 private def mkProd (X Y : Expr) : MetaM Expr :=
-  mkAppM ``CategoryTheory.Limits.prod #[X, Y]
+  mkAppOptM ``CategoryTheory.Limits.prod #[none, none, some X, some Y, none]
 
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
@@ -131,7 +136,6 @@ It checks:
 3. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
 -/
 private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
-  Lean.logInfo m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
   if let some result ← tryWhole rule e then
     return some result
   let args := e.getAppArgs
@@ -149,13 +153,11 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let F := args[4]! -- F : C ⥤ D
     let X := args[5]! -- X : C
     if let some result ← tryWhole rule F then
-      Lean.logInfo m!"Functor.app {result.iso} {X}"
       return some {
         newExpr := ← mkFunctorObj result.newExpr X
         iso := ← mkAppM ``CategoryTheory.Iso.app #[result.iso, X]
       }
     if let some result ← rewriteOnce rule X then
-      Lean.logInfo m!"Functor.mapIso {F} {result.iso}"
       return some {
         newExpr := ← mkFunctorObj F result.newExpr
         iso := ← mkAppM ``CategoryTheory.Functor.mapIso #[F, result.iso]
@@ -173,13 +175,11 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     if let some result ← rewriteOnce rule X then
-      Lean.logInfo m!"prod.mapIso {result.iso} rfl({Y})"
       return some {
         newExpr := ← mkProd result.newExpr Y
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[result.iso, ← mkReflIso Y]
       }
     if let some result ← rewriteOnce rule Y then
-      Lean.logInfo m!"prod.mapIso rfl({X}) {result.iso}"
       return some {
         newExpr := ← mkProd X result.newExpr
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[← mkReflIso X, result.iso]
@@ -203,7 +203,6 @@ private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResul
     else
       iso := some <| result.iso
     current := result.newExpr
-  Lean.logInfo m!"iso = {iso}"
   return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
 
 /--
@@ -270,7 +269,7 @@ Iterates through all registered `iso_iff` lemmas to see if any can be used to
 rewrite the current `target` using the provided `iso`.
 -/
 private def tryIsoIffLemmas (target iso : Expr) : TacticM (Option IffRewriteResult) := do
-  for lemmaName in isoIffLemmas do
+  for lemmaName in ← getIsoIffLemmas do
     if let some result ← tryIsoIffLemma target iso lemmaName then
       return some result
   return none

@@ -73,9 +73,3 @@ example (ha : a ≅ a') (h : F ≅ G) : iso₁ a a' ha h = iso₂ a a' ha h := b
   delta iso₁ iso₂
   ext
   simp
-
-@[gcongr]
-def gcong_obj (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
-  cat_rw [ha]
-
-#check Mathlib.Tactic.GCongr.rel_imp_rel

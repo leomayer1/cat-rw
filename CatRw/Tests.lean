@@ -112,6 +112,7 @@ lemma pres_eq (φ : F ≅ G) :
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
     (M.obj G).IsEquivalence := by
   show_term cat_rw [← φ]
+  sorry
 
 noncomputable
 example (h : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
@@ -139,15 +140,25 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
   cat_rw [M.mapIso φ]
   sorry
 
-example (ha : a ≅ a') : IsZero (a ⨿ b) := by
-  -- cat_rw [ha] should make the goal ⊢ IsZero (a' ⨿ b)
-  sorry
-
 /- Example of how we want cat_rw to work with products.
    After apply cat_rw [ha], the new goal state should be a' ⨯ b ≅ a' ⨯ b
 -/
 example (ha : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
+  -- cat_rw [ha]
+  sorry
+
+#check prod.functor
+
+theorem prod_eq_obj : (a ⨯ b) = (prod.functor.obj a).obj b := rfl
+
+noncomputable
+example (ha : b ≅ b') : a ⨯ b ≅ a ⨯ b' := by
+  rw [prod_eq_obj, prod_eq_obj]
   cat_rw [ha]
+
+example (ha : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
+  rw [prod_eq_obj, prod_eq_obj]
+  --cat_rw [ha]
   sorry
 
 example (h₁ : F ≅ G) (h₂ : F.obj a ≅ x) (h₃ : F.obj b ≅ x) (h₄ : H ≅ K) :

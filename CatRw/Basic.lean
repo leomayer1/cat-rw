@@ -16,6 +16,9 @@ which performs rewriting using isomorphisms in category theory.
 -/
 namespace CatRw
 
+initialize registerTraceClass `CatRw
+
+
 /--
 A `Rule` represents a single isomorphism that can be used for rewriting.
 It captures the isomorphism itself, its source object, and its destination object.
@@ -62,7 +65,7 @@ private def defaultIsoIffLemmas : Array Name := #[
   ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
   ``CategoryTheory.Functor.preservesEpimorphisms.iso_iff,
   ``CategoryTheory.Functor.isEquivalence_iff_of_iso,
-  ``CategoryTheory.Functor.initial_natIso_iff
+  ``CategoryTheory.Functor.initial_natIso_iff,
 ]
 
 private def getIsoIffLemmas : TacticM (Array Name) := do
@@ -112,7 +115,8 @@ private def tryWhole (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := 
     else
       restoreState state
       return none
-  catch _ =>
+  catch err =>
+    trace[CatRw] m!"tryWhole {rule.src} -> {rule.dst} on {e} failed: {err.toMessageData}"
     restoreState state
     return none
 
@@ -128,14 +132,20 @@ private def mkFunctorObj (F X : Expr) : MetaM Expr :=
 private def mkProd (X Y : Expr) : MetaM Expr :=
   mkAppOptM ``CategoryTheory.Limits.prod #[none, none, some X, some Y, none]
 
+/-- Creates a coproduct of two objects `X ⨿ Y`. -/
+private def mkCoprod (X Y : Expr) : MetaM Expr :=
+  mkAppOptM ``CategoryTheory.Limits.coprod #[none, none, some X, some Y, none]
+
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
 It checks:
 1. The expression itself.
 2. If it's a functor application `F.obj X`, it tries to rewrite `F` or `X`.
 3. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
+4. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
 -/
 private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
+  trace[CatRw] m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
   if let some result ← tryWhole rule e then
     return some result
   let args := e.getAppArgs
@@ -153,11 +163,13 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let F := args[4]! -- F : C ⥤ D
     let X := args[5]! -- X : C
     if let some result ← tryWhole rule F then
+      trace[CatRw] m!"Functor.app {result.iso} {X}"
       return some {
         newExpr := ← mkFunctorObj result.newExpr X
         iso := ← mkAppM ``CategoryTheory.Iso.app #[result.iso, X]
       }
     if let some result ← rewriteOnce rule X then
+      trace[CatRw] m!"Functor.mapIso {F} {result.iso}"
       return some {
         newExpr := ← mkFunctorObj F result.newExpr
         iso := ← mkAppM ``CategoryTheory.Functor.mapIso #[F, result.iso]
@@ -175,15 +187,42 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     if let some result ← rewriteOnce rule X then
+      trace[CatRw] m!"prod.mapIso {result.iso} rfl({Y})"
       return some {
         newExpr := ← mkProd result.newExpr Y
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[result.iso, ← mkReflIso Y]
       }
     if let some result ← rewriteOnce rule Y then
+      trace[CatRw] m!"prod.mapIso rfl({X}) {result.iso}"
       return some {
         newExpr := ← mkProd X result.newExpr
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[← mkReflIso X, result.iso]
       }
+  /-
+    Check if `e` is an application of `CategoryTheory.Limits.coprod`.
+    Arity 5:
+    0: {C : Type u}
+    1: [Category C]
+    2: (X : C)
+    3: (Y : C)
+    4: [HasBinaryCoproduct X Y]
+  -/
+  if e.isAppOfArity ``CategoryTheory.Limits.coprod 5 then
+    let X := args[2]! -- X : C
+    let Y := args[3]! -- Y : C
+    if let some result ← rewriteOnce rule X then
+      trace[CatRw] m!"coprod.mapIso {result.iso} rfl({Y})"
+      return some {
+        newExpr := ← mkCoprod result.newExpr Y
+        iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[result.iso, ← mkReflIso Y]
+      }
+    if let some result ← rewriteOnce rule Y then
+      trace[CatRw] m!"coprod.mapIso rfl({X}) {result.iso}"
+      return some {
+        newExpr := ← mkCoprod X result.newExpr
+        iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[← mkReflIso X, result.iso]
+      }
+  trace[CatRw] m!"rwOnce return none"
   return none
 
 /--
@@ -203,6 +242,7 @@ private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResul
     else
       iso := some <| result.iso
     current := result.newExpr
+  trace[CatRw] m!"iso = {iso}"
   return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
 
 /--
@@ -231,6 +271,7 @@ private def tryIsoIffLemma
     (target iso : Expr) (lemmaName : Name) : TacticM (Option IffRewriteResult) := do
   let state ← saveState
   try
+    trace[CatRw] m!"tryIsoIff {target} = {lemmaName} {iso}"
     let iff ← mkAppM lemmaName #[iso] -- iff : P X ↔ P Y
     let iffType ← whnf (← inferType iff)
     match_expr iffType with
@@ -255,12 +296,15 @@ private def tryIsoIffLemma
               mkProof := fun newProof => mkAppM ``Iff.mp #[iff, newProof]
             }
           else
+            trace[CatRw] m!"tryIsoIff failed: isDefEq failed for both sides of {iffType}"
             restoreState state
             return none
     | _ =>
+        trace[CatRw] m!"tryIsoIff failed: {lemmaName} did not return an Iff"
         restoreState state
         return none
-  catch _ =>
+  catch e =>
+    trace[CatRw] m!"tryIsoIff failed with error: {e.toMessageData}"
     restoreState state
     return none
 
@@ -282,6 +326,7 @@ then applying an `iso_iff` lemma.
 private def tryIffGoalRewrite
     (target : Expr) (rules : Array Rule) : TacticM (Option IffRewriteResult) := do
   for candidate in subexpressions target do
+    trace[CatRw] m!"subexpr {candidate}"
     let state ← saveState
     try
       -- Try to rewrite the candidate subexpression.
@@ -291,7 +336,8 @@ private def tryIffGoalRewrite
         return some iffResult
       else
         restoreState state
-    catch _ =>
+    catch e =>
+      trace[CatRw] m!"tryIffGoalRewrite failed for subexpression {candidate}: {e.toMessageData}"
       restoreState state
   return none
 

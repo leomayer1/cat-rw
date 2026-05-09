@@ -79,6 +79,17 @@ example (h₁ : F ≅ G) (h₂ : F.obj a ≅ x) (h₃ : F.obj b ≅ x) (h₄ : H
   let h : G ≅ F := h₁.symm
   cat_rw [h₁]
 
+def iso₁ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [h, ha]
+
+def iso₂ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [ha, h]
+
+example (ha : a ≅ a') (h : F ≅ G) : iso₁ C D F G a a' ha h = iso₂ C D F G a a' ha h := by
+  delta iso₁ iso₂
+  ext
+  simp
+
 infix:10 " === " => CategoryTheory.IsIsomorphic
 
 #check CategoryTheory.IsIsomorphic

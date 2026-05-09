@@ -24,13 +24,6 @@ structure Rule where
   dst : Expr
 
 /--
-Checks if a `Rule` is a "reflexive" rule, meaning its source and destination
-objects are definitionally equal.
--/
-private def Rule.isRefl (r : Rule) : MetaM Bool :=
-  isDefEq r.src r.dst
-
-/--
 The result of a single rewrite operation.
 -/
 structure RewriteResult where
@@ -107,6 +100,7 @@ It checks:
 3. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
 -/
 private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
+  Lean.logInfo m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
   if let some result ← tryWhole rule e then
     return some result
   let args := e.getAppArgs
@@ -124,11 +118,13 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let F := args[4]! -- F : C ⥤ D
     let X := args[5]! -- X : C
     if let some result ← tryWhole rule F then
+      Lean.logInfo m!"Functor.app {result.iso} {X}"
       return some {
         newExpr := ← mkFunctorObj result.newExpr X
         iso := ← mkAppM ``CategoryTheory.Iso.app #[result.iso, X]
       }
     if let some result ← rewriteOnce rule X then
+      Lean.logInfo m!"Functor.mapIso {F} {result.iso}"
       return some {
         newExpr := ← mkFunctorObj F result.newExpr
         iso := ← mkAppM ``CategoryTheory.Functor.mapIso #[F, result.iso]
@@ -146,11 +142,13 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     if let some result ← rewriteOnce rule X then
+      Lean.logInfo m!"prod.mapIso {result.iso} rfl({Y})"
       return some {
         newExpr := ← mkProd result.newExpr Y
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[result.iso, ← mkReflIso Y]
       }
     if let some result ← rewriteOnce rule Y then
+      Lean.logInfo m!"prod.mapIso rfl({X}) {result.iso}"
       return some {
         newExpr := ← mkProd X result.newExpr
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[← mkReflIso X, result.iso]
@@ -174,20 +172,8 @@ private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResul
     else
       iso := some <| result.iso
     current := result.newExpr
+  Lean.logInfo m!"iso = {iso}"
   return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
-
-/--
-Attempts to close the goal `lhs ≅ rhs` if they are definitionally equal.
-Returns `true` if successful.
--/
-private def closeIfRefl (goal : MVarId) (lhs rhs : Expr) : TacticM Bool := do
-  let state ← saveState
-  if ← isDefEq lhs rhs then
-    goal.assign (← mkReflIso rhs)
-    return true
-  else
-    restoreState state
-    return false
 
 /--
 The implementation of the `cat_rw` tactic.
@@ -206,14 +192,19 @@ def evalCatRw
         "cat_rw expected a goal of the form `X ≅ Y`, but the goal is{indentExpr target}"
   let rules ← parseRules rulesStx
   let result ← rewriteMany rules lhs
-  let newTarget ← mkAppM ``CategoryTheory.Iso #[result.newExpr, rhs] -- newTarget : Expr (new_X ≅ Y)
-  let newGoal ← mkFreshExprMVar newTarget -- newGoal : Expr (the new goal metavariable)
-  goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[result.iso, newGoal])
-  let newGoalId := newGoal.mvarId!
-  if ← closeIfRefl newGoalId result.newExpr rhs then
+  -- If the rewritten LHS is definitionally equal to the RHS, we can close the goal directly.
+  -- This avoids adding an unnecessary composition with `Iso.refl`.
+  if ← isDefEq rhs result.newExpr then
+    goal.assign (result.iso)
     replaceMainGoal []
   else
-    replaceMainGoal [newGoalId]
+    -- Otherwise, we create a new goal `new_X ≅ Y` and assign `iso.trans result.iso new_goal`
+    -- to the original goal.
+    let newTarget ← mkAppM ``CategoryTheory.Iso #[result.newExpr, rhs]
+    -- newGoal : Expr (the new goal metavariable)
+    let newGoal ← mkFreshExprMVar newTarget 
+    goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[result.iso, newGoal])
+    replaceMainGoal [newGoal.mvarId!]
 
 end CatRw
 

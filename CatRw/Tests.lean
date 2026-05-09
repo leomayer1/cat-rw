@@ -42,14 +42,6 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
 
 /- A more basic example of what we want cat-rw to do -/
 example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
-  exact F.mapIso ha
-
-/-
-example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
-  cat_rw [ha]
--/
-
-example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
   cat_rw [ha]
 
 example (h : F ≅ G) : F.obj a ≅ G.obj a := by
@@ -60,13 +52,6 @@ example (h : F ≅ G) : F.obj a ≅ G.obj a := by
 -/
 
 example (h : F ≅ G) : F.obj a ≅ G.obj a := by
-  cat_rw [h]
-
-example (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
-  cat_rw [h, ha]
-
-def iso₁ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
-  cat_rw [h, ha]
 
 def iso₂ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
   cat_rw [ha, h]
@@ -113,6 +98,6 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
   sorry
 
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
-    (M.obj F).Initial := by
+    (M.obj F).IsEquivalence := by
   cat_rw [φ]
   sorry

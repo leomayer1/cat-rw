@@ -1,3 +1,4 @@
+import CatRw.Basic
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.Products
 import Mathlib.CategoryTheory.ObjectProperty.Basic
@@ -46,9 +47,18 @@ example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
   cat_rw [ha]
 -/
 
+example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
+  cat_rw [ha]
+
 example (h : F ≅ G) : F.obj a ≅ G.obj a := by
   exact h.app a
 /-
 example (h : F ≅ G) : F.obj a ≅ G.obj a := by
   cat_rw [h]
 -/
+
+example (h : F ≅ G) : F.obj a ≅ G.obj a := by
+  cat_rw [h]
+
+example (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [h, ha]

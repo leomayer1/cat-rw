@@ -140,16 +140,11 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
   cat_rw [M.mapIso φ]
   sorry
 
-set_option trace.CatRw true in
-example [HasCoproducts C] (ha : a ≅ a') : IsZero (a ⨿ b) := by
-  cat_rw [ha] -- should make the goal ⊢ IsZero (a' ⨿ b)
-  sorry
-
 /- Example of how we want cat_rw to work with products.
    After apply cat_rw [ha], the new goal state should be a' ⨯ b ≅ a' ⨯ b
 -/
 example (ha : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
-  --cat_rw [ha]
+  -- cat_rw [ha]
   sorry
 
 #check prod.functor

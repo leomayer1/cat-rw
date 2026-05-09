@@ -115,7 +115,8 @@ private def tryWhole (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := 
     else
       restoreState state
       return none
-  catch _ =>
+  catch err =>
+    trace[CatRw] m!"tryWhole {rule.src} -> {rule.dst} on {e} failed: {err.toMessageData}"
     restoreState state
     return none
 
@@ -133,7 +134,7 @@ private def mkProd (X Y : Expr) : MetaM Expr :=
 
 /-- Creates a coproduct of two objects `X ⨿ Y`. -/
 private def mkCoprod (X Y : Expr) : MetaM Expr :=
-  mkAppM ``CategoryTheory.Limits.coprod #[X, Y]
+  mkAppOptM ``CategoryTheory.Limits.coprod #[none, none, some X, some Y, none]
 
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
@@ -207,7 +208,6 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     4: [HasBinaryCoproduct X Y]
   -/
   if e.isAppOfArity ``CategoryTheory.Limits.coprod 5 then
-    trace[CatRw] m!"DETECTED COPROD"
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     if let some result ← rewriteOnce rule X then
@@ -232,14 +232,11 @@ Transitions from `lhs` to a new expression by composing the isomorphisms.
 private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResult := do
   let mut current := lhs -- current : Expr (the object being rewritten)
   let mut iso := none -- iso : Option Expr (the accumulated isomorphism)
-  trace[CatRw] m!"rwmany with {rules.size}"
   for rule in rules do
-    trace[CatRw] m!"rewriteMany try match {rule.src} on {current}"
     let some result ← rewriteOnce rule current
       | throwError
           "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
           to{indentExpr current}"
-    trace[CatRw] m!"in many got {result.iso}"
     if let some i := iso then
       iso := some <| ← mkAppM ``CategoryTheory.Iso.trans #[i, result.iso]
     else
@@ -299,12 +296,15 @@ private def tryIsoIffLemma
               mkProof := fun newProof => mkAppM ``Iff.mp #[iff, newProof]
             }
           else
+            trace[CatRw] m!"tryIsoIff failed: isDefEq failed for both sides of {iffType}"
             restoreState state
             return none
     | _ =>
+        trace[CatRw] m!"tryIsoIff failed: {lemmaName} did not return an Iff"
         restoreState state
         return none
-  catch _ =>
+  catch e =>
+    trace[CatRw] m!"tryIsoIff failed with error: {e.toMessageData}"
     restoreState state
     return none
 
@@ -336,7 +336,8 @@ private def tryIffGoalRewrite
         return some iffResult
       else
         restoreState state
-    catch _ =>
+    catch e =>
+      trace[CatRw] m!"tryIffGoalRewrite failed for subexpression {candidate}: {e.toMessageData}"
       restoreState state
   return none
 

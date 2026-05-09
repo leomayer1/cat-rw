@@ -1,6 +1,6 @@
 import CatRw.Basic
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
-import Mathlib.CategoryTheory.Limits.Shapes.Products
+import Mathlib.CategoryTheory.Limits.Preserves.Finite
 import Mathlib.CategoryTheory.ObjectProperty.Basic
 import Mathlib.Algebra.Category.Grp.Adjunctions
 import Mathlib.CategoryTheory.Equivalence
@@ -34,6 +34,11 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
   let φ₆ : b' ⨯ (c ⨯ a') ≅ (b' ⨯ c) ⨯ a' :=
     (prod.associator _ _ _).symm
   exact φ₁ ≪≫ φ₂ ≪≫ φ₃ ≪≫ φ₄ ≪≫ φ₅ ≪≫ φ₆
+
+noncomputable
+example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
+  cat_rw [ha, hb, prod.braiding a' b', prod.associator, prod.braiding a' c]
+  cat_rw [←prod.associator b']
 
 /- Want to simply be able to call
 noncomputable

@@ -166,3 +166,7 @@ example (h₁ : F ≅ G) (h₂ : F.obj a ≅ x) (h₃ : F.obj b ≅ x) (h₄ : H
   cat_rw [h₄, h₂]
   symm
   cat_rw [h₁.symm, h₃]
+
+noncomputable
+example (ha : a ≅ a') (hb : b ≅ b') : a ⨯ b ≅ a' ⨯ b' := by
+  cat_rw [ha, hb]

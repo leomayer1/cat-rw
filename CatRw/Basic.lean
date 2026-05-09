@@ -229,21 +229,37 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
 Applies a sequence of rules to the left-hand side of an isomorphism.
 Transitions from `lhs` to a new expression by composing the isomorphisms.
 -/
-private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResult := do
+private def rewriteManyRaw (rules : Array Rule) (lhs : Expr) :
+    TacticM (RewriteResult × (Array <| Option <| Rule × Expr)) := do
   let mut current := lhs -- current : Expr (the object being rewritten)
   let mut iso := none -- iso : Option Expr (the accumulated isomorphism)
+  let mut errs := #[]
   for rule in rules do
-    let some result ← rewriteOnce rule current
-      | throwError
+    if let some result ← rewriteOnce rule current then
+      if let some i := iso then
+        iso := some <| ← mkAppM ``CategoryTheory.Iso.trans #[i, result.iso]
+      else
+        iso := some <| result.iso
+      current := result.newExpr
+      errs := errs.push none
+    else
+      errs := errs.push <| some ⟨rule, current⟩
+  trace[CatRw] m!"iso = {iso}"
+  return ⟨{ newExpr := current, iso := iso.getD (← mkReflIso lhs) }, errs⟩
+
+private def rethrowFirst (arr : Array <| Option <| (Rule × Expr)) : TacticM Unit := do
+  for err in arr.reverse do
+    if let some (rule, current) := err then
+      throwError
           "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
           to{indentExpr current}"
-    if let some i := iso then
-      iso := some <| ← mkAppM ``CategoryTheory.Iso.trans #[i, result.iso]
-    else
-      iso := some <| result.iso
-    current := result.newExpr
-  trace[CatRw] m!"iso = {iso}"
-  return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
+  return ()
+
+private def rewriteMany (rules : Array Rule) (lhs : Expr) :
+    TacticM RewriteResult := do
+  let result ← rewriteManyRaw rules lhs
+  rethrowFirst result.snd
+  return result.fst
 
 /--
 Extracts all subexpressions of an expression `e` by traversing its structure.
@@ -346,19 +362,26 @@ Handles the case where the goal is an isomorphism `X ≅ Y`.
 Rewrites `X` using the rules and updates the goal.
 -/
 private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : TacticM Unit := do
-  let result ← rewriteMany rules lhs
-  -- If the rewritten LHS is definitionally equal to the RHS, we can close the goal directly.
-  -- This avoids adding an unnecessary composition with `Iso.refl`.
-  if ← isDefEq rhs result.newExpr then
-    goal.assign (result.iso)
+  let resultLhs ← rewriteManyRaw rules lhs
+  let resultRhs ← rewriteManyRaw rules rhs
+  for (errL, errR) in resultLhs.snd.zip resultRhs.snd |>.reverse do
+    if let (some (rule, currentL), some (_, currentR)) := (errL, errR) then
+      throwError
+        "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
+        to either{indentExpr currentL}\n\
+        or{indentExpr currentR}"
+  let (newL, isoL) := (resultLhs.fst.newExpr, resultLhs.fst.iso)
+  let (newR, isoR) := (resultRhs.fst.newExpr, resultRhs.fst.iso)
+  if ← isDefEq newL newR then
+    let isoR_symm ← mkAppM ``CategoryTheory.Iso.symm #[isoR]
+    goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[isoL, isoR_symm])
     replaceMainGoal []
   else
-    -- Otherwise, we create a new goal `new_X ≅ Y` and assign `iso.trans result.iso new_goal`
-    -- to the original goal.
-    let newTarget ← mkAppM ``CategoryTheory.Iso #[result.newExpr, rhs]
-    -- newGoal : Expr (the new goal metavariable)
+    let newTarget ← mkAppM ``CategoryTheory.Iso #[newL, newR]
     let newGoal ← mkFreshExprMVar newTarget
-    goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[result.iso, newGoal])
+    let isoR_symm ← mkAppM ``CategoryTheory.Iso.symm #[isoR]
+    let mid ← mkAppM ``CategoryTheory.Iso.trans #[newGoal, isoR_symm]
+    goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[isoL, mid])
     replaceMainGoal [newGoal.mvarId!]
 
 /--

@@ -416,11 +416,16 @@ private def tryIffGoalRewrite
 
 /--
 Handles the case where the goal is an isomorphism `X ≅ Y`.
-Rewrites `X` using the rules and updates the goal.
+Rewrites both `X` and `Y` using the provided rules and updates the goal.
+Bidirectional rewriting is supported: rules that cannot be applied to the LHS
+are tried on the RHS. The two rewrites are then joined in the middle.
 -/
 private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : TacticM Unit := do
+  -- Rewrite the left-hand side and right-hand side independently.
   let resultLhs ← rewriteManyRaw rules lhs
   let resultRhs ← rewriteManyRaw rules rhs
+  -- Check for consistency: a rule must apply to at least one side.
+  -- We traverse the error lists (which match the sequence of rules) in reverse.
   for (errL, errR) in resultLhs.snd.zip resultRhs.snd |>.reverse do
     if let (some (rule, currentL), some (_, currentR)) := (errL, errR) then
       throwError
@@ -429,16 +434,29 @@ private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : 
         or{indentExpr currentR}"
   let (newL, isoL) := (resultLhs.fst.newExpr, resultLhs.fst.iso)
   let (newR, isoR) := (resultRhs.fst.newExpr, resultRhs.fst.iso)
+  -- Optimization: helper to avoid composing with `Iso.refl`.
+  let mkTrans (i1 i2 : Expr) : MetaM Expr := do
+    if i1.isAppOfArity ``CategoryTheory.Iso.refl 3 then return i2
+    if i2.isAppOfArity ``CategoryTheory.Iso.refl 3 then return i1
+    mkAppM ``CategoryTheory.Iso.trans #[i1, i2]
+  -- Optimization: helper to avoid `Iso.symm` of `Iso.refl`.
+  let mkSymm (i : Expr) : MetaM Expr := do
+    if i.isAppOfArity ``CategoryTheory.Iso.refl 3 then return i
+    mkAppM ``CategoryTheory.Iso.symm #[i]
+  -- If the rewritten objects are definitionally equal, we can close the goal.
+  -- The proof is `isoL ≪≫ isoR.symm`.
   if ← isDefEq newL newR then
-    let isoR_symm ← mkAppM ``CategoryTheory.Iso.symm #[isoR]
-    goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[isoL, isoR_symm])
+    let isoR_symm ← mkSymm isoR
+    goal.assign (← mkTrans isoL isoR_symm)
     replaceMainGoal []
   else
+    -- Otherwise, we create a intermediate goal `newL ≅ newR`.
+    -- The original goal `lhs ≅ rhs` is solved by `isoL ≪≫ (newGoal ≪≫ isoR.symm)`.
     let newTarget ← mkAppM ``CategoryTheory.Iso #[newL, newR]
     let newGoal ← mkFreshExprMVar newTarget
-    let isoR_symm ← mkAppM ``CategoryTheory.Iso.symm #[isoR]
-    let mid ← mkAppM ``CategoryTheory.Iso.trans #[newGoal, isoR_symm]
-    goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[isoL, mid])
+    let isoR_symm ← mkSymm isoR
+    let mid ← mkTrans newGoal isoR_symm
+    goal.assign (← mkTrans isoL mid)
     replaceMainGoal [newGoal.mvarId!]
 
 /--

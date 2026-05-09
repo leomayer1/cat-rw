@@ -5,6 +5,8 @@ import Mathlib.CategoryTheory.ObjectProperty.Basic
 open CategoryTheory Limits
 
 variable (C : Type*) [Category* C] [HasProducts C]
+variable (D : Type*) [Category* D]
+variable (F G : C ⥤ D)
 variable (a a' b b' c : C)
 
 #check a ⨯ a'
@@ -33,4 +35,20 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
 noncomputable
 example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
   cat_rw [ha, hb, prod.braiding a' b', prod.associator, prod.braiding a' c, ←prod.associator]
+-/
+
+/- A more basic example of what we want cat-rw to do -/
+example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
+  exact F.mapIso ha
+
+/-
+example (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
+  cat_rw [ha]
+-/
+
+example (h : F ≅ G) : F.obj a ≅ G.obj a := by
+  exact h.app a
+/-
+example (h : F ≅ G) : F.obj a ≅ G.obj a := by
+  cat_rw [h]
 -/

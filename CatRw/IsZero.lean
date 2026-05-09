@@ -1,12 +1,18 @@
 import Mathlib
+import CatRw.Tactic
 
-open CategoryTheory Limits
+open CategoryTheory Limits AlgebraicGeometry
 
 variable {C : Type*} [Category* C] (X Y : C) (φ : X ≅ Y) {D : Type*} [Category* D] (F : C ⥤ D)
 
 example (h : IsZero Y) : IsZero X := by
-    rw [Iso.isZero_iff φ] -- cat_rw [φ]
+    cat_rw [φ]
     exact h
+
+example (F G : C ⥤ D) (φ : F ≅ G) [G.PreservesMonomorphisms] :
+        F.PreservesMonomorphisms := by
+    cat_rw [φ]
+    infer_instance
 
 example (h : IsZero (F.obj Y)) : IsZero (F.obj X) := by
     let φ : F.obj X ≅ F.obj Y := F.mapIso φ

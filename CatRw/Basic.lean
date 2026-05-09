@@ -1,5 +1,5 @@
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
-import Mathlib.Tactic
+import Lean.Elab.Tactic
 
 open CategoryTheory Limits
 open Lean Meta Elab Tactic
@@ -54,7 +54,9 @@ Parses a single rewrite rule syntax into a `Rule` structure.
 Handles both forward and backward (using `←`) directions.
 -/
 private def parseRule (stx : Syntax) : TacticM Rule := do
-  let raw ← Term.elabTerm stx[1]! none -- raw : Expr (the isomorphism)
+  let raw ← Term.elabTerm stx[1]! none
+  let (args, _, _) ← forallMetaTelescopeReducing (← inferType raw)
+  let raw := mkAppN raw args
   let raw ← instantiateMVars raw
   let (src, dst) ← isoEndpoints raw -- src, dst : Expr (objects)
   if stx[0]!.isNone then
@@ -75,7 +77,8 @@ Attempts to apply a `Rule` to the entire expression `e` if they are definitional
 private def tryWhole (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
   let state ← saveState
   try
-    if ← withReducibleAndInstances <| isDefEq e rule.src then
+    let sameType ← isDefEq (← inferType e) (← inferType rule.src)
+    if sameType && (← isDefEq e rule.src) then
       return some { newExpr := ← instantiateMVars rule.dst, iso := ← instantiateMVars rule.iso }
     else
       restoreState state
@@ -179,7 +182,7 @@ Returns `true` if successful.
 -/
 private def closeIfRefl (goal : MVarId) (lhs rhs : Expr) : TacticM Bool := do
   let state ← saveState
-  if ← withReducibleAndInstances <| isDefEq lhs rhs then
+  if ← isDefEq lhs rhs then
     goal.assign (← mkReflIso rhs)
     return true
   else

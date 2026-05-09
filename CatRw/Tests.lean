@@ -111,8 +111,11 @@ lemma pres_eq (φ : F ≅ G) :
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
     (M.obj G).IsEquivalence := by
   show_term cat_rw [← φ]
-  sorry
 
+noncomputable
+example (h : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
+  sorry
+  --cat_rw [h] --produces an error
 
 def anotheriso₁ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
   cat_rw [h, ha]
@@ -138,3 +141,9 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
 example (ha : a ≅ a') : IsZero (a ⨿ b) := by
   -- cat_rw [ha] should make the goal ⊢ IsZero (a' ⨿ b)
   sorry
+
+example (h₁ : F ≅ G) (h₂ : F.obj a ≅ x) (h₃ : F.obj b ≅ x) (h₄ : H ≅ K) :
+    (H.obj (F.obj a)) ≅ K.obj (G.obj b) := by
+  cat_rw [h₄, h₂]
+  symm
+  cat_rw [h₁.symm, h₃]

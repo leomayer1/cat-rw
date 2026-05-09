@@ -7,7 +7,7 @@ import Mathlib.CategoryTheory.Equivalence
 
 open CategoryTheory Limits
 
-variable {C : Type*} [Category* C] [HasProducts C]
+variable {C : Type*} [Category* C] [HasProducts C] [HasBinaryCoproducts C]
 variable {D : Type*} [Category* D]
 variable {F G : C ⥤ D}
 variable (a a' b b' c : C)
@@ -133,4 +133,8 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
     IsZero ((M.obj F).obj a) := by
   cat_rw [M.mapIso φ]
+  sorry
+
+example (ha : a ≅ a') : IsZero (a ⨿ b) := by
+  -- cat_rw [ha] should make the goal ⊢ IsZero (a' ⨿ b)
   sorry

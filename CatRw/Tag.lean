@@ -22,3 +22,6 @@ example : IsReduced X := by
 example {R S : CommRingCat} (φ : Spec R ≅ Spec S) : IsReduced (Spec R) := by
   cat_rw [φ]
   sorry
+
+noncomputable
+def iso_of_iso {R S : CommRingCat} (φ : R ≅ S) : Spec R ≅ Spec S := Scheme.Spec.mapIso φ.op.symm

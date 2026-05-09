@@ -32,5 +32,5 @@ def TopCat.sheafToPresheaf_iso {X : TopCat} {F G : Sheaf C X} (φ : F ≅ G) :
 
 example {X : TopCat} {F G : TopCat.Sheaf C X} (φ : F ≅ G) : Limits.IsZero F.obj := by
   cat_rw [φ]
-  
+
   sorry

@@ -113,6 +113,18 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
   show_term cat_rw [← φ]
   sorry
 
+
+def anotheriso₁ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [h, ha]
+
+def anotheriso₂ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [ha, h]
+
+example (ha : a ≅ a') (h : F ≅ G) : anotheriso₁ a a' ha h = anotheriso₂ a a' ha h := by
+  delta anotheriso₁ anotheriso₂
+  ext
+  simp
+
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
     (M.obj F).IsEquivalence := by
   show_term cat_rw [φ]

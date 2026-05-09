@@ -1,4 +1,7 @@
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
+import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
+import Mathlib.CategoryTheory.Functor.EpiMono
+import Mathlib.CategoryTheory.Equivalence
 import Mathlib.Tactic
 
 open CategoryTheory Limits
@@ -15,6 +18,18 @@ structure Rule where
 structure RewriteResult where
   newExpr : Expr
   iso : Expr
+
+structure IffRewriteResult where
+  newTarget : Expr
+  mkProof : Expr → MetaM Expr
+
+private def isoIffLemmas : Array Name := #[
+  ``CategoryTheory.Iso.isZero_iff,
+  ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
+  ``CategoryTheory.Functor.preservesEpimorphisms.iso_iff,
+  ``CategoryTheory.Functor.isEquivalence_iff_of_iso,
+  ``CategoryTheory.Functor.initial_natIso_iff
+]
 
 private def isoEndpoints (e : Expr) : MetaM (Expr × Expr) := do
   let type ← whnf (← inferType e)
@@ -109,16 +124,75 @@ private def closeIfRefl (goal : MVarId) (lhs rhs : Expr) : TacticM Bool := do
     restoreState state
     return false
 
-def evalCatRw
-    (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) : TacticM Unit := withMainContext do
-  let goal ← getMainGoal
-  let target ← whnf (← getMainTarget)
-  let (lhs, rhs) ←
-    match_expr target with
-    | CategoryTheory.Iso _ _ X Y => pure (X, Y)
-    | _ => throwError
-        "cat_rw expected a goal of the form `X ≅ Y`, but the goal is{indentExpr target}"
-  let rules ← parseRules rulesStx
+private partial def subexpressions (e : Expr) : Array Expr :=
+  let rec visit (e : Expr) (acc : Array Expr) : Array Expr :=
+    let acc := acc.push e
+    match e with
+    | .app f a => visit a (visit f acc)
+    | .lam _ t b _ => visit b (visit t acc)
+    | .forallE _ t b _ => visit b (visit t acc)
+    | .letE _ t v b _ => visit b (visit v (visit t acc))
+    | .mdata _ b => visit b acc
+    | .proj _ _ b => visit b acc
+    | _ => acc
+  visit e #[]
+
+private def tryIsoIffLemma
+    (target iso : Expr) (lemmaName : Name) : TacticM (Option IffRewriteResult) := do
+  let state ← saveState
+  try
+    let iff ← mkAppM lemmaName #[iso]
+    let iffType ← whnf (← inferType iff)
+    match_expr iffType with
+    | Iff lhs rhs =>
+        let lhsState ← saveState
+        if ← withReducibleAndInstances <| isDefEq lhs target then
+          let iff ← instantiateMVars iff
+          let newTarget ← instantiateMVars rhs
+          return some {
+            newTarget
+            mkProof := fun newProof => mkAppM ``Iff.mpr #[iff, newProof]
+          }
+        else
+          restoreState lhsState
+          if ← withReducibleAndInstances <| isDefEq rhs target then
+            let iff ← instantiateMVars iff
+            let newTarget ← instantiateMVars lhs
+            return some {
+              newTarget
+              mkProof := fun newProof => mkAppM ``Iff.mp #[iff, newProof]
+            }
+          else
+            restoreState state
+            return none
+    | _ =>
+        restoreState state
+        return none
+  catch _ =>
+    restoreState state
+    return none
+
+private def tryIsoIffLemmas (target iso : Expr) : TacticM (Option IffRewriteResult) := do
+  for lemmaName in isoIffLemmas do
+    if let some result ← tryIsoIffLemma target iso lemmaName then
+      return some result
+  return none
+
+private def tryIffGoalRewrite
+    (target : Expr) (rules : Array Rule) : TacticM (Option IffRewriteResult) := do
+  for candidate in subexpressions target do
+    let state ← saveState
+    try
+      let result ← rewriteMany rules candidate
+      if let some iffResult ← tryIsoIffLemmas target result.iso then
+        return some iffResult
+      else
+        restoreState state
+    catch _ =>
+      restoreState state
+  return none
+
+private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : TacticM Unit := do
   let result ← rewriteMany rules lhs
   let newTarget ← mkAppM ``CategoryTheory.Iso #[result.newExpr, rhs]
   let newGoal ← mkFreshExprMVar newTarget
@@ -128,6 +202,31 @@ def evalCatRw
     replaceMainGoal []
   else
     replaceMainGoal [newGoalId]
+
+private def evalIffGoal (goal : MVarId) (rules : Array Rule) (target : Expr) : TacticM Unit := do
+  let some result ← tryIffGoalRewrite target rules
+    | throwError
+        "cat_rw could not rewrite the goal using the registered iso-iff lemmas. \
+        The goal is{indentExpr target}"
+  let newGoal ← mkFreshExprMVar result.newTarget
+  goal.assign (← result.mkProof newGoal)
+  replaceMainGoal [newGoal.mvarId!]
+
+private def evalTarget (goal : MVarId) (rules : Array Rule) (target : Expr) : TacticM Unit := do
+  match_expr target with
+  | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal rules X Y
+  | _ =>
+      let targetWhnf ← whnf target
+      match_expr targetWhnf with
+      | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal rules X Y
+      | _ => evalIffGoal goal rules target
+
+def evalCatRw
+    (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) : TacticM Unit := withMainContext do
+  let goal ← getMainGoal
+  let target ← instantiateMVars (← getMainTarget)
+  let rules ← parseRules rulesStx
+  evalTarget goal rules target
 
 end CatRw
 

@@ -2,6 +2,8 @@ import CatRw.Basic
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.Products
 import Mathlib.CategoryTheory.ObjectProperty.Basic
+import Mathlib.Algebra.Category.Grp.Adjunctions
+import Mathlib.CategoryTheory.Equivalence
 
 open CategoryTheory Limits
 
@@ -73,3 +75,44 @@ example (ha : a ≅ a') (h : F ≅ G) : iso₁ a a' ha h = iso₂ a a' ha h := b
   delta iso₁ iso₂
   ext
   simp
+
+lemma isZero_func (ha : a ≅ a') (h : F ≅ G) : IsZero (F.obj a) := by
+  -- cat_rw [ha] should make the goal ⊢ IsZero (F.obj a')
+  cat_rw [ha, h]
+  sorry
+
+example (A B : GrpCat) (φ : A ≅ B) (h : IsZero (GrpCat.abelianize.obj B)) :
+    IsZero (GrpCat.abelianize.obj A) := by
+  cat_rw [φ]
+  exact h
+
+#check CategoryTheory.Functor.preservesMonomorphisms.iso_iff
+#check CategoryTheory.Functor.preservesEpimorphisms.iso_iff
+
+lemma pres_mono (φ : F ≅ G) :
+    F.PreservesMonomorphisms := by
+  -- cat_rw [φ] should make the goal ⊢ G.PreservesMonomorphisms
+  cat_rw [φ]
+  sorry
+
+lemma pres_epi (φ : F ≅ G) :
+    F.PreservesEpimorphisms := by
+  -- cat_rw [φ] should make the goal ⊢ G.PreservesEpimorphisms
+  cat_rw [φ]
+  sorry
+
+lemma pres_eq (φ : F ≅ G) :
+    CategoryTheory.Functor.IsEquivalence F := by
+  -- cat_rw [φ] should make the goal ⊢ G.IsEquivalence
+  cat_rw [φ]
+  sorry
+
+example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
+    (M.obj F).IsEquivalence := by
+  cat_rw [φ]
+  sorry
+
+example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
+    (M.obj F).Initial := by
+  cat_rw [φ]
+  sorry

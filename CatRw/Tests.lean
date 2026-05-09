@@ -9,7 +9,8 @@ open CategoryTheory Limits
 
 variable {C : Type*} [Category* C] [HasProducts C] [HasBinaryCoproducts C]
 variable {D : Type*} [Category* D]
-variable {F G : C ⥤ D}
+variable {E : Type*} [Category* E]
+variable {F G : C ⥤ D} {H K : D ⥤ E}
 variable (a a' b b' c : C)
 
 #check a ⨯ a'
@@ -111,8 +112,11 @@ lemma pres_eq (φ : F ≅ G) :
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
     (M.obj G).IsEquivalence := by
   show_term cat_rw [← φ]
-  sorry
 
+noncomputable
+example (h : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
+  sorry
+  --cat_rw [h] --produces an error
 
 def anotheriso₁ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
   cat_rw [h, ha]
@@ -138,3 +142,16 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
 example (ha : a ≅ a') : IsZero (a ⨿ b) := by
   -- cat_rw [ha] should make the goal ⊢ IsZero (a' ⨿ b)
   sorry
+
+/- Example of how we want cat_rw to work with products.
+   After apply cat_rw [ha], the new goal state should be a' ⨯ b ≅ a' ⨯ b
+-/
+example (ha : a ≅ a') : a ⨯ b ≅ a' ⨯ b := by
+  cat_rw [ha]
+  sorry
+
+example (h₁ : F ≅ G) (h₂ : F.obj a ≅ x) (h₃ : F.obj b ≅ x) (h₄ : H ≅ K) :
+    (H.obj (F.obj a)) ≅ K.obj (G.obj b) := by
+  cat_rw [h₄, h₂]
+  symm
+  cat_rw [h₁.symm, h₃]

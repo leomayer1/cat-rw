@@ -88,6 +88,7 @@ example (A B : GrpCat) (φ : A ≅ B) (h : IsZero (GrpCat.abelianize.obj B)) :
 
 #check CategoryTheory.Functor.preservesMonomorphisms.iso_iff
 #check CategoryTheory.Functor.preservesEpimorphisms.iso_iff
+#check prod.braiding
 
 lemma pres_mono (φ : F ≅ G) :
     F.PreservesMonomorphisms := by
@@ -108,11 +109,16 @@ lemma pres_eq (φ : F ≅ G) :
   sorry
 
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
-    (M.obj F).IsEquivalence := by
-  cat_rw [φ]
+    (M.obj G).IsEquivalence := by
+  show_term cat_rw [← φ]
   sorry
 
 example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
     (M.obj F).IsEquivalence := by
-  cat_rw [φ]
+  show_term cat_rw [φ]
+  sorry
+
+example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
+    IsZero ((M.obj F).obj a) := by
+  cat_rw [M.mapIso φ]
   sorry

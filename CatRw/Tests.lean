@@ -5,9 +5,9 @@ import Mathlib.CategoryTheory.ObjectProperty.Basic
 
 open CategoryTheory Limits
 
-variable (C : Type*) [Category* C] [HasProducts C]
-variable (D : Type*) [Category* D]
-variable (F G : C ⥤ D)
+variable {C : Type*} [Category* C] [HasProducts C]
+variable {D : Type*} [Category* D]
+variable {F G : C ⥤ D}
 variable (a a' b b' c : C)
 
 #check a ⨯ a'
@@ -62,3 +62,20 @@ example (h : F ≅ G) : F.obj a ≅ G.obj a := by
 
 example (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
   cat_rw [h, ha]
+
+def iso₁ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [h, ha]
+
+def iso₂ (ha : a ≅ a') (h : F ≅ G) : F.obj a ≅ G.obj a' := by
+  cat_rw [ha, h]
+
+example (ha : a ≅ a') (h : F ≅ G) : iso₁ a a' ha h = iso₂ a a' ha h := by
+  delta iso₁ iso₂
+  ext
+  simp
+
+@[gcongr]
+def gcong_obj (ha : a ≅ a') : F.obj a ≅ F.obj a' := by
+  cat_rw [ha]
+
+#check Mathlib.Tactic.GCongr.rel_imp_rel

@@ -34,7 +34,7 @@ by trying the current list of category-theoretic rewrite lemmas.
 -/
 macro "cat_rw " "[" e:term "]" : tactic =>
   `(tactic| first
-    | rw [cat_rw_iso_isZero_iff $e]
+    | rw [(CategoryTheory.Iso.isZero_iff $e)]
     | rw [cat_rw_preservesMonomorphisms_iso_iff $e])
 
 /-- The symmetric form of `cat_rw [e]`. -/

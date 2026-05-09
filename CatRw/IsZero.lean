@@ -9,6 +9,10 @@ example (h : IsZero Y) : IsZero X := by
     cat_rw [φ]
     exact h
 
+example (h : IsZero Y) : IsZero X := by
+    rw [Iso.isZero_iff φ]
+    exact h
+
 example (F G : C ⥤ D) (φ : F ≅ G) [G.PreservesMonomorphisms] :
         F.PreservesMonomorphisms := by
     cat_rw [φ]

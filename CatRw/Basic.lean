@@ -36,10 +36,25 @@ structure RewriteResult where
   /-- The isomorphism between the original expression and the `newExpr`. -/
   iso : Expr
 
+/--
+The result of an `Iff` rewrite.
+It contains the new goal expression and a function to construct the proof of the
+original goal from a proof of the new goal.
+-/
 structure IffRewriteResult where
+  /-- The new goal expression (e.g., `IsZero Y`). -/
   newTarget : Expr
+  /--
+  A function that, given a proof of `newTarget`, returns a proof of the original target.
+  Proof constructor : `newTarget_proof → originalTarget_proof`.
+  -/
   mkProof : Expr → MetaM Expr
 
+/--
+A list of lemmas that relate isomorphisms to logical equivalences (`Iff`).
+These are used when `cat_rw` is applied to a non-isomorphism goal.
+Examples include `Iso.isZero_iff : X ≅ Y → (IsZero X ↔ IsZero Y)`.
+-/
 private def isoIffLemmas : Array Name := #[
   ``CategoryTheory.Iso.isZero_iff,
   ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
@@ -191,6 +206,11 @@ private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResul
   Lean.logInfo m!"iso = {iso}"
   return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
 
+/--
+Extracts all subexpressions of an expression `e` by traversing its structure.
+This is used to find candidate objects within a goal that can be rewritten using
+isomorphisms.
+-/
 private partial def subexpressions (e : Expr) : Array Expr :=
   let rec visit (e : Expr) (acc : Array Expr) : Array Expr :=
     let acc := acc.push e
@@ -204,15 +224,20 @@ private partial def subexpressions (e : Expr) : Array Expr :=
     | _ => acc
   visit e #[]
 
+/--
+Attempts to apply a specific `iso_iff` lemma to the `target` goal using a given `iso`.
+If the lemma's `Iff` sides match the target, it returns the other side as a new target.
+-/
 private def tryIsoIffLemma
     (target iso : Expr) (lemmaName : Name) : TacticM (Option IffRewriteResult) := do
   let state ← saveState
   try
-    let iff ← mkAppM lemmaName #[iso]
+    let iff ← mkAppM lemmaName #[iso] -- iff : P X ↔ P Y
     let iffType ← whnf (← inferType iff)
     match_expr iffType with
     | Iff lhs rhs =>
         let lhsState ← saveState
+        -- Case 1: Target matches LHS of Iff.
         if ← withReducibleAndInstances <| isDefEq lhs target then
           let iff ← instantiateMVars iff
           let newTarget ← instantiateMVars rhs
@@ -222,6 +247,7 @@ private def tryIsoIffLemma
           }
         else
           restoreState lhsState
+          -- Case 2: Target matches RHS of Iff.
           if ← withReducibleAndInstances <| isDefEq rhs target then
             let iff ← instantiateMVars iff
             let newTarget ← instantiateMVars lhs
@@ -239,18 +265,29 @@ private def tryIsoIffLemma
     restoreState state
     return none
 
+/--
+Iterates through all registered `iso_iff` lemmas to see if any can be used to
+rewrite the current `target` using the provided `iso`.
+-/
 private def tryIsoIffLemmas (target iso : Expr) : TacticM (Option IffRewriteResult) := do
   for lemmaName in isoIffLemmas do
     if let some result ← tryIsoIffLemma target iso lemmaName then
       return some result
   return none
 
+/--
+Attempts to rewrite the goal (of type `target`) by finding a subexpression
+that can be rewritten using the provided `rules` into an isomorphism, and
+then applying an `iso_iff` lemma.
+-/
 private def tryIffGoalRewrite
     (target : Expr) (rules : Array Rule) : TacticM (Option IffRewriteResult) := do
   for candidate in subexpressions target do
     let state ← saveState
     try
+      -- Try to rewrite the candidate subexpression.
       let result ← rewriteMany rules candidate
+      -- If we got an isomorphism, see if it helps rewrite the whole goal.
       if let some iffResult ← tryIsoIffLemmas target result.iso then
         return some iffResult
       else
@@ -259,6 +296,10 @@ private def tryIffGoalRewrite
       restoreState state
   return none
 
+/--
+Handles the case where the goal is an isomorphism `X ≅ Y`.
+Rewrites `X` using the rules and updates the goal.
+-/
 private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : TacticM Unit := do
   let result ← rewriteMany rules lhs
   -- If the rewritten LHS is definitionally equal to the RHS, we can close the goal directly.
@@ -275,6 +316,10 @@ private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : 
     goal.assign (← mkAppM ``CategoryTheory.Iso.trans #[result.iso, newGoal])
     replaceMainGoal [newGoal.mvarId!]
 
+/--
+Handles the case where the goal is NOT an isomorphism (e.g., `IsZero X`).
+Attempts to find a rewrite using `iso_iff` lemmas.
+-/
 private def evalIffGoal (goal : MVarId) (rules : Array Rule) (target : Expr) : TacticM Unit := do
   let some result ← tryIffGoalRewrite target rules
     | throwError
@@ -284,6 +329,10 @@ private def evalIffGoal (goal : MVarId) (rules : Array Rule) (target : Expr) : T
   goal.assign (← result.mkProof newGoal)
   replaceMainGoal [newGoal.mvarId!]
 
+/--
+Dispatches the tactic based on whether the goal is an isomorphism or
+another type of expression that might be rewritable via `iso_iff`.
+-/
 private def evalTarget (goal : MVarId) (rules : Array Rule) (target : Expr) : TacticM Unit := do
   match_expr target with
   | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal rules X Y

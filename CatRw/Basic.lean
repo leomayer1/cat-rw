@@ -1,3 +1,4 @@
+import CatRw.Attr
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
 import Mathlib.CategoryTheory.Functor.EpiMono
@@ -54,17 +55,21 @@ structure IffRewriteResult where
   mkProof : Expr → MetaM Expr
 
 /--
-A list of lemmas that relate isomorphisms to logical equivalences (`Iff`).
-These are used when `cat_rw` is applied to a non-isomorphism goal.
-Examples include `Iso.isZero_iff : X ≅ Y → (IsZero X ↔ IsZero Y)`.
+The lemmas tagged with `@[cat_rw]`.
+
+Each tagged lemma should accept an isomorphism as its main explicit argument
+and return an iff whose left or right side is the current goal.
 -/
-private def isoIffLemmas : Array Name := #[
+private def defaultIsoIffLemmas : Array Name := #[
   ``CategoryTheory.Iso.isZero_iff,
   ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
   ``CategoryTheory.Functor.preservesEpimorphisms.iso_iff,
   ``CategoryTheory.Functor.isEquivalence_iff_of_iso,
   ``CategoryTheory.Functor.initial_natIso_iff,
 ]
+
+private def getIsoIffLemmas : TacticM (Array Name) := do
+  return defaultIsoIffLemmas ++ catRwAttr.getDecls (← getEnv)
 
 /--
 Extracts the source and destination objects from an isomorphism's type.
@@ -124,7 +129,7 @@ private def mkFunctorObj (F X : Expr) : MetaM Expr :=
 
 /-- Creates a product of two objects `X ⨯ Y`. -/
 private def mkProd (X Y : Expr) : MetaM Expr :=
-  mkAppM ``CategoryTheory.Limits.prod #[X, Y]
+  mkAppOptM ``CategoryTheory.Limits.prod #[none, none, some X, some Y, none]
 
 /-- Creates a coproduct of two objects `X ⨿ Y`. -/
 private def mkCoprod (X Y : Expr) : MetaM Expr :=
@@ -308,7 +313,7 @@ Iterates through all registered `iso_iff` lemmas to see if any can be used to
 rewrite the current `target` using the provided `iso`.
 -/
 private def tryIsoIffLemmas (target iso : Expr) : TacticM (Option IffRewriteResult) := do
-  for lemmaName in isoIffLemmas do
+  for lemmaName in ← getIsoIffLemmas do
     if let some result ← tryIsoIffLemma target iso lemmaName then
       return some result
   return none

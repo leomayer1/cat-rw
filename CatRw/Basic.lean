@@ -15,6 +15,9 @@ which performs rewriting using isomorphisms in category theory.
 -/
 namespace CatRw
 
+initialize registerTraceClass `CatRw
+
+
 /--
 A `Rule` represents a single isomorphism that can be used for rewriting.
 It captures the isomorphism itself, its source object, and its destination object.
@@ -60,7 +63,7 @@ private def isoIffLemmas : Array Name := #[
   ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
   ``CategoryTheory.Functor.preservesEpimorphisms.iso_iff,
   ``CategoryTheory.Functor.isEquivalence_iff_of_iso,
-  ``CategoryTheory.Functor.initial_natIso_iff
+  ``CategoryTheory.Functor.initial_natIso_iff,
 ]
 
 /--
@@ -123,15 +126,20 @@ private def mkFunctorObj (F X : Expr) : MetaM Expr :=
 private def mkProd (X Y : Expr) : MetaM Expr :=
   mkAppM ``CategoryTheory.Limits.prod #[X, Y]
 
+/-- Creates a coproduct of two objects `X ⨿ Y`. -/
+private def mkCoprod (X Y : Expr) : MetaM Expr :=
+  mkAppM ``CategoryTheory.Limits.coprod #[X, Y]
+
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
 It checks:
 1. The expression itself.
 2. If it's a functor application `F.obj X`, it tries to rewrite `F` or `X`.
 3. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
+4. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
 -/
 private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
-  Lean.logInfo m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
+  trace[CatRw] m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
   if let some result ← tryWhole rule e then
     return some result
   let args := e.getAppArgs
@@ -149,13 +157,13 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let F := args[4]! -- F : C ⥤ D
     let X := args[5]! -- X : C
     if let some result ← tryWhole rule F then
-      Lean.logInfo m!"Functor.app {result.iso} {X}"
+      trace[CatRw] m!"Functor.app {result.iso} {X}"
       return some {
         newExpr := ← mkFunctorObj result.newExpr X
         iso := ← mkAppM ``CategoryTheory.Iso.app #[result.iso, X]
       }
     if let some result ← rewriteOnce rule X then
-      Lean.logInfo m!"Functor.mapIso {F} {result.iso}"
+      trace[CatRw] m!"Functor.mapIso {F} {result.iso}"
       return some {
         newExpr := ← mkFunctorObj F result.newExpr
         iso := ← mkAppM ``CategoryTheory.Functor.mapIso #[F, result.iso]
@@ -173,17 +181,43 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     if let some result ← rewriteOnce rule X then
-      Lean.logInfo m!"prod.mapIso {result.iso} rfl({Y})"
+      trace[CatRw] m!"prod.mapIso {result.iso} rfl({Y})"
       return some {
         newExpr := ← mkProd result.newExpr Y
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[result.iso, ← mkReflIso Y]
       }
     if let some result ← rewriteOnce rule Y then
-      Lean.logInfo m!"prod.mapIso rfl({X}) {result.iso}"
+      trace[CatRw] m!"prod.mapIso rfl({X}) {result.iso}"
       return some {
         newExpr := ← mkProd X result.newExpr
         iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[← mkReflIso X, result.iso]
       }
+  /-
+    Check if `e` is an application of `CategoryTheory.Limits.coprod`.
+    Arity 5:
+    0: {C : Type u}
+    1: [Category C]
+    2: (X : C)
+    3: (Y : C)
+    4: [HasBinaryCoproduct X Y]
+  -/
+  if e.isAppOfArity ``CategoryTheory.Limits.coprod 5 then
+    trace[CatRw] m!"DETECTED COPROD"
+    let X := args[2]! -- X : C
+    let Y := args[3]! -- Y : C
+    if let some result ← rewriteOnce rule X then
+      trace[CatRw] m!"coprod.mapIso {result.iso} rfl({Y})"
+      return some {
+        newExpr := ← mkCoprod result.newExpr Y
+        iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[result.iso, ← mkReflIso Y]
+      }
+    if let some result ← rewriteOnce rule Y then
+      trace[CatRw] m!"coprod.mapIso rfl({X}) {result.iso}"
+      return some {
+        newExpr := ← mkCoprod X result.newExpr
+        iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[← mkReflIso X, result.iso]
+      }
+  trace[CatRw] m!"rwOnce return none"
   return none
 
 /--
@@ -193,17 +227,20 @@ Transitions from `lhs` to a new expression by composing the isomorphisms.
 private def rewriteMany (rules : Array Rule) (lhs : Expr) : TacticM RewriteResult := do
   let mut current := lhs -- current : Expr (the object being rewritten)
   let mut iso := none -- iso : Option Expr (the accumulated isomorphism)
+  trace[CatRw] m!"rwmany with {rules.size}"
   for rule in rules do
+    trace[CatRw] m!"rewriteMany try match {rule.src} on {current}"
     let some result ← rewriteOnce rule current
       | throwError
           "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
           to{indentExpr current}"
+    trace[CatRw] m!"in many got {result.iso}"
     if let some i := iso then
       iso := some <| ← mkAppM ``CategoryTheory.Iso.trans #[i, result.iso]
     else
       iso := some <| result.iso
     current := result.newExpr
-  Lean.logInfo m!"iso = {iso}"
+  trace[CatRw] m!"iso = {iso}"
   return { newExpr := current, iso := iso.getD (← mkReflIso lhs) }
 
 /--
@@ -232,6 +269,7 @@ private def tryIsoIffLemma
     (target iso : Expr) (lemmaName : Name) : TacticM (Option IffRewriteResult) := do
   let state ← saveState
   try
+    trace[CatRw] m!"tryIsoIff {target} = {lemmaName} {iso}"
     let iff ← mkAppM lemmaName #[iso] -- iff : P X ↔ P Y
     let iffType ← whnf (← inferType iff)
     match_expr iffType with
@@ -283,6 +321,7 @@ then applying an `iso_iff` lemma.
 private def tryIffGoalRewrite
     (target : Expr) (rules : Array Rule) : TacticM (Option IffRewriteResult) := do
   for candidate in subexpressions target do
+    trace[CatRw] m!"subexpr {candidate}"
     let state ← saveState
     try
       -- Try to rewrite the candidate subexpression.

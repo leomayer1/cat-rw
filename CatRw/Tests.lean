@@ -138,8 +138,9 @@ example (φ : F ≅ G) (M : (C ⥤ D) ⥤ (C ⥤ D)) :
   cat_rw [M.mapIso φ]
   sorry
 
-example (ha : a ≅ a') : IsZero (a ⨿ b) := by
-  -- cat_rw [ha] should make the goal ⊢ IsZero (a' ⨿ b)
+set_option trace.CatRw true in
+example [HasCoproducts C] (ha : a ≅ a') : IsZero (a ⨿ b) := by
+  cat_rw [ha] -- should make the goal ⊢ IsZero (a' ⨿ b)
   sorry
 
 example (h₁ : F ≅ G) (h₂ : F.obj a ≅ x) (h₃ : F.obj b ≅ x) (h₄ : H ≅ K) :

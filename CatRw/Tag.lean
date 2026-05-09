@@ -17,11 +17,10 @@ example : IsReduced X := by
   cat_rw [φ]
   sorry
 
-#check Spec
-
-example {R S : CommRingCat} (φ : Spec R ≅ Spec S) : IsReduced (Spec R) := by
-  cat_rw [φ]
-  sorry
-
 noncomputable
 def iso_of_iso {R S : CommRingCat} (φ : R ≅ S) : Spec R ≅ Spec S := Scheme.Spec.mapIso φ.op.symm
+
+example {R S : CommRingCat} (φ : R ≅ S) : IsReduced (Spec R) := by
+  -- cat_rw [φ] should make the goal ⊢ IsReduced (Spec S)
+  cat_rw [φ]
+  sorry

@@ -3,10 +3,11 @@ import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
 import Mathlib.CategoryTheory.Functor.EpiMono
 import Mathlib.CategoryTheory.Equivalence
+import Mathlib.AlgebraicGeometry.Scheme
 import Mathlib.Tactic
 import Lean.Elab.Tactic
 
-open CategoryTheory Limits
+open CategoryTheory Limits AlgebraicGeometry
 open Lean Meta Elab Tactic
 open Lean.Parser.Tactic (rwRuleSeq)
 
@@ -53,6 +54,10 @@ structure IffRewriteResult where
   Proof constructor : `newTarget_proof → originalTarget_proof`.
   -/
   mkProof : Expr → MetaM Expr
+
+noncomputable
+def iso_of_iso {R S : CommRingCat} (φ : R ≅ S) : Spec R ≅ Spec S :=
+  Scheme.Spec.mapIso φ.op.symm
 
 /--
 The lemmas tagged with `@[cat_rw]`.
@@ -136,13 +141,18 @@ private def mkProd (X Y : Expr) : MetaM Expr :=
 private def mkCoprod (X Y : Expr) : MetaM Expr :=
   mkAppOptM ``CategoryTheory.Limits.coprod #[none, none, some X, some Y, none]
 
+/-- Creates `Spec R`. -/
+private def mkSpec (R : Expr) : MetaM Expr :=
+  mkAppM ``AlgebraicGeometry.Spec #[R]
+
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
 It checks:
 1. The expression itself.
 2. If it's a functor application `F.obj X`, it tries to rewrite `F` or `X`.
-3. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
-4. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
+3. If it's `Spec R`, it tries to rewrite `R`.
+4. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
+5. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
 -/
 private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
   trace[CatRw] m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
@@ -173,6 +183,18 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
       return some {
         newExpr := ← mkFunctorObj F result.newExpr
         iso := ← mkAppM ``CategoryTheory.Functor.mapIso #[F, result.iso]
+      }
+  /-
+    Check if `e` is an application of `AlgebraicGeometry.Spec`.
+    If `R` rewrites to `S`, use `iso_of_iso : R ≅ S → Spec R ≅ Spec S`.
+  -/
+  if e.isAppOfArity ``AlgebraicGeometry.Spec 1 then
+    let R := args[0]!
+    if let some result ← rewriteOnce rule R then
+      trace[CatRw] m!"iso_of_iso {result.iso}"
+      return some {
+        newExpr := ← mkSpec result.newExpr
+        iso := ← mkAppM ``CatRw.iso_of_iso #[result.iso]
       }
   /-
     Check if `e` is an application of `CategoryTheory.Limits.prod`.

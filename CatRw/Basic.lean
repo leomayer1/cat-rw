@@ -3,11 +3,10 @@ import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
 import Mathlib.CategoryTheory.Functor.EpiMono
 import Mathlib.CategoryTheory.Equivalence
-import Mathlib.AlgebraicGeometry.Scheme
 import Mathlib.Tactic
 import Lean.Elab.Tactic
 
-open CategoryTheory Limits AlgebraicGeometry
+open CategoryTheory Limits
 open Lean Meta Elab Tactic
 open Lean.Parser.Tactic (rwRuleSeq)
 
@@ -55,10 +54,6 @@ structure IffRewriteResult where
   -/
   mkProof : Expr → MetaM Expr
 
-noncomputable
-def iso_of_iso {R S : CommRingCat} (φ : R ≅ S) : Spec R ≅ Spec S :=
-  Scheme.Spec.mapIso φ.op.symm
-
 /--
 The lemmas tagged with `@[cat_rw]`.
 
@@ -75,6 +70,10 @@ private def defaultIsoIffLemmas : Array Name := #[
 
 private def getIsoIffLemmas : TacticM (Array Name) := do
   return defaultIsoIffLemmas ++ catRwAttr.getDecls (← getEnv)
+
+/-- The lemmas tagged with `@[cat_rw_iso]`. -/
+private def getIsoMakerLemmas : MetaM (Array Name) := do
+  return catRwIsoAttr.getDecls (← getEnv)
 
 /--
 Extracts the source and destination objects from an isomorphism's type.
@@ -141,16 +140,54 @@ private def mkProd (X Y : Expr) : MetaM Expr :=
 private def mkCoprod (X Y : Expr) : MetaM Expr :=
   mkAppOptM ``CategoryTheory.Limits.coprod #[none, none, some X, some Y, none]
 
-/-- Creates `Spec R`. -/
-private def mkSpec (R : Expr) : MetaM Expr :=
-  mkAppM ``AlgebraicGeometry.Spec #[R]
+/--
+Try a tagged iso-maker lemma on a recursively produced isomorphism.
+
+The lemma is accepted only when applying it to `result.iso` produces an isomorphism
+whose source is definitionally equal to the expression currently being rewritten.
+If the lemma produces the opposite direction, we use its symmetry.
+-/
+private def tryIsoMakerLemma
+    (e : Expr) (result : RewriteResult) (lemmaName : Name) :
+    MetaM (Option RewriteResult) := do
+  let state ← saveState
+  try
+    let iso ← mkAppM lemmaName #[result.iso]
+    let (src, dst) ← isoEndpoints iso
+    let endpointState ← saveState
+    if ← withReducibleAndInstances <| isDefEq src e then
+      return some {
+        newExpr := ← instantiateMVars dst
+        iso := ← instantiateMVars iso
+      }
+    else
+      restoreState endpointState
+      if ← withReducibleAndInstances <| isDefEq dst e then
+        return some {
+          newExpr := ← instantiateMVars src
+          iso := ← mkAppM ``CategoryTheory.Iso.symm #[← instantiateMVars iso]
+        }
+      else
+        restoreState state
+        return none
+  catch err =>
+    trace[CatRw] m!"tryIsoMaker {lemmaName} failed on {e}: {err.toMessageData}"
+    restoreState state
+    return none
+
+private def tryIsoMakerLemmas (e : Expr) (result : RewriteResult) :
+    MetaM (Option RewriteResult) := do
+  for lemmaName in ← getIsoMakerLemmas do
+    if let some lifted ← tryIsoMakerLemma e result lemmaName then
+      return some lifted
+  return none
 
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
 It checks:
 1. The expression itself.
 2. If it's a functor application `F.obj X`, it tries to rewrite `F` or `X`.
-3. If it's `Spec R`, it tries to rewrite `R`.
+3. If a tagged `@[cat_rw_iso]` lemma can lift an iso through the expression.
 4. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
 5. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
 -/
@@ -183,18 +220,6 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
       return some {
         newExpr := ← mkFunctorObj F result.newExpr
         iso := ← mkAppM ``CategoryTheory.Functor.mapIso #[F, result.iso]
-      }
-  /-
-    Check if `e` is an application of `AlgebraicGeometry.Spec`.
-    If `R` rewrites to `S`, use `iso_of_iso : R ≅ S → Spec R ≅ Spec S`.
-  -/
-  if e.isAppOfArity ``AlgebraicGeometry.Spec 1 then
-    let R := args[0]!
-    if let some result ← rewriteOnce rule R then
-      trace[CatRw] m!"iso_of_iso {result.iso}"
-      return some {
-        newExpr := ← mkSpec result.newExpr
-        iso := ← mkAppM ``CatRw.iso_of_iso #[result.iso]
       }
   /-
     Check if `e` is an application of `CategoryTheory.Limits.prod`.
@@ -244,6 +269,16 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
         newExpr := ← mkCoprod X result.newExpr
         iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[← mkReflIso X, result.iso]
       }
+  for arg in args do
+    let state ← saveState
+    try
+      if let some result ← rewriteOnce rule arg then
+        if let some lifted ← tryIsoMakerLemmas e result then
+          return some lifted
+      restoreState state
+    catch err =>
+      trace[CatRw] m!"tagged iso-maker search failed for argument {arg} of {e}: {err.toMessageData}"
+      restoreState state
   trace[CatRw] m!"rwOnce return none"
   return none
 

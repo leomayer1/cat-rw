@@ -52,3 +52,8 @@ example {X Y Z : Scheme} (φ : Y ≅ X) : X ⨯ Z ≅ Y ⨯ Z := by
 noncomputable
 example {X Y Z : Scheme} (φ : Y ≅ X) : X ⨿ Z ≅ Y ⨿ Z := by
   cat_rw [φ]
+
+noncomputable
+example {R S : CommRingCat} (φ : R ≅ S) : Limits.IsZero (Spec R ⨯ X) := by
+  cat_rw [φ]
+  sorry

@@ -9,7 +9,7 @@ import Lean.Elab.Tactic
 
 open CategoryTheory Limits
 open Lean Meta Elab Tactic
-open Lean.Parser.Tactic (rwRuleSeq)
+open Parser.Tactic (optConfig location getConfigItems rwRuleSeq)
 
 namespace CatRw
 
@@ -68,11 +68,22 @@ structure Rewrote where
   /-- The proof of `r expr expr'`. -/
   proof : Expr
 
+/-- Configuration for `cat_rwv2`. -/
+structure Config where
+  occs : Occurrences := .all
+  deriving Inhabited
+
+/-- State for the `grw` algorithm. -/
+structure StateV2 where
+  occCount : Nat := 0
+
 /-- Context for the `grw` algorithm. -/
 structure ContextV2 where
   rule : RuleV2
   isoMakerLemmas : Array Name
   relations : NameMap RelInfo
+  config : Config
+  occCountRef : IO.Ref StateV2
   depth : Nat := 0
 
 abbrev CatRwM2 := ReaderT ContextV2 MetaM
@@ -146,10 +157,16 @@ private def tryMatchRule (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote)
   let ctx ← read
   if r_out == ctx.rule.rel then
     if ← withReducible (isDefEq ctx.rule.lhs expr) then
-      let proof ← instantiateMVars (← solveInstances ctx.rule.proof)
-      let rhs ← instantiateMVars (← solveInstances ctx.rule.rhs)
-      trace[CatRw] m!"matched rule: {ctx.rule.lhs} -> {rhs}"
-      return some { expr' := rhs, proof }
+      let s ← ctx.occCountRef.get
+      ctx.occCountRef.set { s with occCount := s.occCount + 1 }
+      let s ← ctx.occCountRef.get
+      if ctx.config.occs.contains s.occCount then
+        let proof ← instantiateMVars (← solveInstances ctx.rule.proof)
+        let rhs ← instantiateMVars (← solveInstances ctx.rule.rhs)
+        trace[CatRw] m!"matched rule: {ctx.rule.lhs} -> {rhs} (occ {s.occCount})"
+        return some { expr' := rhs, proof }
+      else
+        trace[CatRw] m!"matched rule but skipped (occ {s.occCount})"
   return none
 
 /-- Helper to check if an expression is a reflexivity application for a given relation. -/
@@ -187,17 +204,17 @@ partial def grw (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
   if ctx.depth > 20 then return none
   let expr ← instantiateMVars expr
   if expr.isMVar then return none
-  withTraceNode `CatRw (fun _ => return m!"grw {r_out} on {expr}") do
-    -- 1. Try if rule matches expr
-    if let some res ← tryMatchRule r_out expr then return some res
-    -- 2. Try lifting lemmas
-    for lemmaName in ctx.isoMakerLemmas do
-      let state ← saveState
-      try
-        if let some res ← tryApplyLemma lemmaName r_out expr then return some res
-        restoreState state
-      catch _ => restoreState state
-    return none
+  trace[CatRw] m!"grw {r_out} on {expr}"
+  -- 1. Try if rule matches expr
+  if let some res ← tryMatchRule r_out expr then return some res
+  -- 2. Try lifting lemmas
+  for lemmaName in ctx.isoMakerLemmas do
+    let state ← saveState
+    try
+      if let some res ← tryApplyLemma lemmaName r_out expr then return some res
+      restoreState state
+    catch _ => restoreState state
+  return none
 
 /-- Attempts to apply a specific lifting lemma to the expression. -/
 private partial def tryApplyLemma (lemmaName : Name) (r_out : Name) (expr : Expr) :
@@ -263,10 +280,10 @@ private def evalRelationGoal (goal : MVarId) (r_goal : Name) (lhs rhs : Expr) :
   let ctx ← read
   let relInfo := (ctx.relations.find? r_goal).get!
   -- Rewrite both sides
-  let rhsrw ← grw r_goal rhs
   let mut lhsrw := none
   if relInfo.symm.isSome then
     lhsrw ← grw r_goal lhs
+  let rhsrw ← grw r_goal rhs
   if rhsrw.isNone && lhsrw.isNone then return #[goal]
   let newLhs ← instantiateMVars (if let some l := lhsrw then l.expr' else lhs)
   let newRhs ← instantiateMVars (if let some r := rhsrw then r.expr' else rhs)
@@ -316,18 +333,64 @@ private def evalPropGoal (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId
     return #[newGoal.mvarId!]
   return #[goal]
 
-/--
-Dispatches the tactic based on the goal type.
-If the goal is a known relation, it rewrites both sides.
-Otherwise, it attempts to rewrite the goal itself as a proposition.
--/
-def evalTargetV2 (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId) := do
+/-- Handles hypotheses that are registered binary relations (e.g., `h : X ≅ Y`). -/
+private def evalRelationHyp (goal : MVarId) (fvarId : FVarId) (r_hyp : Name) (lhs rhs : Expr) :
+    CatRwM2 (MVarId × FVarId) := do
   let ctx ← read
+  let relInfo := (ctx.relations.find? r_hyp).get!
+  let mut lhsrw := none
+  if relInfo.symm.isSome then
+    lhsrw ← grw r_hyp lhs
+  let rhsrw ← grw r_hyp rhs
+  if rhsrw.isNone && lhsrw.isNone then return (goal, fvarId)
+  let newLhs ← instantiateMVars (if let some l := lhsrw then l.expr' else lhs)
+  let newRhs ← instantiateMVars (if let some r := rhsrw then r.expr' else rhs)
+  let mut finalProof : Expr := mkFVar fvarId
+  if let some r_res := rhsrw then
+    finalProof ← mkTrans relInfo finalProof r_res.proof
+  if let some l_res := lhsrw then
+    let isoL_symm ← mkSymm relInfo l_res.proof
+    finalProof ← mkTrans relInfo isoL_symm finalProof
+  let newTarget ← mkAppM r_hyp #[newLhs, newRhs]
+  let res ← goal.replace fvarId finalProof newTarget
+  return (res.mvarId, res.fvarId)
+
+/-- Handles hypotheses that are predicates. -/
+private def evalPropHyp (goal : MVarId) (fvarId : FVarId) (type : Expr) : CatRwM2 (MVarId × FVarId) := do
+  let r_goal := ``Iff
+  let ctx ← read
+  if let some res ← grw r_goal type then
+    let relInfo := (ctx.relations.find? r_goal).get!
+    if ← isReflProof relInfo res.proof then
+      return (goal, fvarId)
+    let newProof ← mkAppM ``Iff.mp #[res.proof, mkFVar fvarId]
+    let res ← goal.replace fvarId newProof res.expr'
+    return (res.mvarId, res.fvarId)
+  return (goal, fvarId)
+
+/-- Dispatches the rewrite based on whether it's the goal or a hypothesis. -/
+def evalRewrite (goal : MVarId) (fvarId? : Option FVarId) : CatRwM2 (Array MVarId × Option FVarId) := do
+  let ctx ← read
+  trace[CatRw] m!"evalRewrite at {fvarId?.map mkFVar |>.getD (mkConst ``none)}"
+  let target ← match fvarId? with
+    | some fvarId => fvarId.getType
+    | none => goal.getType
   let target ← instantiateMVars target
-  if let some (r_goal, lhs, rhs) ← getRelInfo? ctx.relations target then
-    evalRelationGoal goal r_goal lhs rhs
+  trace[CatRw] m!"target: {target}"
+  if let some (r, lhs, rhs) ← getRelInfo? ctx.relations target then
+    if let some fvarId := fvarId? then
+      let (g, f) ← evalRelationHyp goal fvarId r lhs rhs
+      return (#[g], some f)
+    else
+      let gs ← evalRelationGoal goal r lhs rhs
+      return (gs, none)
   else
-    evalPropGoal goal target
+    if let some fvarId := fvarId? then
+      let (g, f) ← evalPropHyp goal fvarId target
+      return (#[g], some f)
+    else
+      let gs ← evalPropGoal goal target
+      return (gs, none)
 
 /-- Parses a user-provided rewrite rule. -/
 private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
@@ -338,50 +401,64 @@ private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
   let type ← inferType proof
   let env ← getEnv
   let relations := relExt.getState env
-  if let some (rel, lhs, rhs) ← getRelInfo? relations type then
+  let res ← match ← getRelInfo? relations type with
+  | .some (rel, lhs, rhs) =>
     if stx[0]!.isNone then
       return { proof, rel, lhs, rhs }
     else
       let relInfo := (relations.find? rel).get!
-      if let some symm := relInfo.symm then
+      match relInfo.symm with
+      | .some symm =>
         let symmProof ← mkAppM symm #[proof]
         let newLhs ← instantiateMVars rhs
         let newRhs ← instantiateMVars lhs
         return { proof := symmProof, rel, lhs := newLhs, rhs := newRhs }
-      throwError "Relation {rel} is not symmetric"
-  throwError "Rule must be a binary relation"
+      | .none => throwError "Relation {rel} is not symmetric"
+  | .none => throwError "Rule must be a binary relation: {type}"
+
+
+declare_config_elab elabConfig Config
 
 /-- The main entry point for the `cat_rwv2` tactic. -/
-def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) :
+def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) (loc : Location) (config : Config) :
     TacticM Unit := withMainContext do
-  let goal ← getMainGoal
   let rules ← match rulesStx with
     | `(rwRuleSeq| [$rules,*]) => rules.getElems.mapM parseRuleV2
     | _ => throwUnsupportedSyntax
   let env ← getEnv
   let isoMakerLemmas := catRwIsoAttr.getDecls env ++ catRwAttr.getDecls env
   let relations := relExt.getState env
-  let mut currentGoals := #[goal]
-  for rule in rules do
-    let mut nextGoals := #[]
-    for g in currentGoals do
-      if ← g.isAssigned then continue
-      let t ← g.getType
-      let ctx := { rule, isoMakerLemmas, relations }
-      let newGs ← liftMetaM <| ReaderT.run (evalTargetV2 g t) ctx
-      nextGoals := nextGoals ++ newGs
-    currentGoals := nextGoals
+  let occCountRef ← IO.mkRef {}
+  let originalGoal ← getMainGoal
+  let rewrite (fvarId? : Option FVarId) : TacticM Unit := do
+    let mut fvarId? := fvarId?
+    for rule in rules do
+      let goal ← getMainGoal
+      occCountRef.set {}
+      let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
+      let (gs, nextFVarId?) ← liftMetaM <| ReaderT.run (evalRewrite goal fvarId?) ctx
+      replaceMainGoal gs.toList
+      fvarId? := nextFVarId?
+  withLocation loc
+    (fun fvarId => rewrite (some fvarId))
+    (rewrite none)
+    (fun _ => throwError "failed to rewrite")
   if CatRw.trace_iso_expr.get <| ← getOptions then
-    let val ← instantiateMVars (mkMVar goal)
-    Lean.logInfo m!"iso := {val}" -- {← goal.getType}
-  replaceMainGoal currentGoals.toList
+    let val ← liftMetaM <| instantiateMVars (mkMVar originalGoal)
+    Lean.logInfo m!"iso := {val}"
+
+end CatRw
+
+attribute [cat_rw_iso] congrArg
 
 /--
 `cat_rwv2 [rules]` performs generalized rewriting using registered relations.
 It propagates rewrites through expressions using congruence/lifting lemmas.
+Supports `at` location and `config := { occs := ... }`.
 -/
-elab "cat_rwv2 " rules:rwRuleSeq : tactic => evalCatRwV2 rules
-
-attribute [cat_rw_iso] congrArg
-
-end CatRw
+elab "cat_rwv2 " cfg:Parser.Tactic.optConfig rules:Parser.Tactic.rwRuleSeq loc:(Parser.Tactic.location)? : tactic => do
+  let cfg ← CatRw.elabConfig cfg
+  let loc := match loc with
+    | some stx => expandLocation stx
+    | none => Location.targets #[] true
+  CatRw.evalCatRwV2 rules loc cfg

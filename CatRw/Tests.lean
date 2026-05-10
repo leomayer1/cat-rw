@@ -1,9 +1,4 @@
-import CatRw.Basic
-import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
-import Mathlib.CategoryTheory.Limits.Preserves.Finite
-import Mathlib.CategoryTheory.ObjectProperty.Basic
-import Mathlib.Algebra.Category.Grp.Adjunctions
-import Mathlib.CategoryTheory.Equivalence
+import CatRw.TagTests
 
 open CategoryTheory Limits
 
@@ -14,6 +9,12 @@ variable {D : Type*} [Category* D] [HasProducts D]
 variable {E : Type*} [Category* E]
 variable {F G : C ⥤ D} {H K : D ⥤ E}
 variable (a a' b b' c : C)
+
+/-
+  Very basic tests
+-/
+example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
+  cat_rw [h, h']
 
 
 /- An example of what we would want cat-rw to be able to solve -/
@@ -33,11 +34,10 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
     (prod.associator _ _ _).symm
   φ₁ ≪≫ φ₂ ≪≫ φ₃ ≪≫ φ₄ ≪≫ φ₅ ≪≫ φ₆
 
-
-
 noncomputable
 example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
-  cat_rw [ha, hb]
-  cat_rw [prod.braiding a']
-  cat_rw [prod.associator]
-  cat_rw [prod.braiding a']
+  cat_rw [←ha, ←hb, prod.braiding a b, prod.associator, prod.braiding a c]
+
+example (ha : a ≅ a') (hF : F ≅ G) (hH : H ≅ K) (h₂ : G.obj a' ≅ G.obj b) :
+    K.obj (G.obj a) ≅ H.obj (F.obj b) := by
+  cat_rw [ha, h₂, hF, hH]

@@ -1,4 +1,6 @@
 import CatRw.Basic
+import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
+import Mathlib.CategoryTheory.Limits.Shapes.Products
 
 open CategoryTheory Limits
 
@@ -12,6 +14,11 @@ The goal is to replace the first three steps, and to have the tactic be flexible
 to cover the first three cases by the tagged lemmas. -/
 set_option trace.CatRw true
 
+/-
+Tagging this lemma results in terms with somewhat bad definitional equalities.
+Ideally, Functor.mapIso should be tagged. We aren't tagging it here because we don't
+want to mess with mathlib.
+-/
 @[cat_rw_iso]
 def obj_iso {C D : Type*} [Category* C] [Category* D] (F : C ⥤ D) {x x' : C} (φ : x ≅ x') :
     F.obj x ≅ F.obj x' := F.mapIso φ
@@ -61,9 +68,5 @@ The tactic should recursively look for an expression matching the conclusion of 
 in both the LHS and the RHS
 -/
 
-noncomputable
-example {C : Type*} [Category* C] [HasProducts C] (x x' y y' : C) (hx : x ≅ x') (hy : y ≅ y') :
-    x ⨯ x ≅ y ⨯ y := by
-  cat_rw [hx, hy]
-  --should change the goal to x' ⨯ x ≅ y' ⨯ y, using the tagged lemmas about products
-  sorry
+example {C : Type*} [Category* C] (a b c : C) (f : a ≅ b) (g : c ≅ b) : a ≅ c := by
+  cat_rw [g, ←f]

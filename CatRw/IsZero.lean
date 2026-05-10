@@ -1,5 +1,5 @@
 import Mathlib
-import CatRw.Basic
+import CatRw.BasicV2
 
 open CategoryTheory Limits AlgebraicGeometry
 
@@ -11,7 +11,7 @@ set_option CatRw.trace_iso_expr true
 set_option warn.sorry false
 
 example (h : IsZero Y) : IsZero X := by
-    cat_rw [φ]
+    cat_rwv2 [φ]
     exact h
 
 example (h : IsZero Y) : IsZero X := by
@@ -20,8 +20,7 @@ example (h : IsZero Y) : IsZero X := by
 
 example (F G : C ⥤ D) (φ : F ≅ G) [G.PreservesMonomorphisms] :
         F.PreservesMonomorphisms := by
-    cat_rw [φ]
-    infer_instance
+    cat_rwv2 [φ]
 
 example (h : IsZero (F.obj Y)) : IsZero (F.obj X) := by
     let φ : F.obj X ≅ F.obj Y := F.mapIso φ

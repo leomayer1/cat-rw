@@ -75,6 +75,7 @@ structure ContextV2 where
   rule : RuleV2
   isoMakerLemmas : Array Name
   relations : NameMap RelInfo
+  depth : Nat := 0
 
 abbrev CatRwM2 := ReaderT ContextV2 MetaM
 
@@ -85,21 +86,25 @@ instance : MonadBacktrack Meta.SavedState CatRwM2 where
 /--
 Extracts the relation and endpoints from a type.
 Supports `X ≅ Y`, `X = Y`, `P ↔ Q`.
+Only returns if the relation is registered.
 -/
-def getRelInfo? (type : Expr) : MetaM (Option (Name × Expr × Expr)) := do
+def getRelInfo? (relations : NameMap RelInfo) (type : Expr) : MetaM (Option (Name × Expr × Expr)) := do
   let type ← whnf type
-  match_expr type with
-  | CategoryTheory.Iso _ _ X Y => return some (``CategoryTheory.Iso, X, Y)
-  | Eq _ X Y => return some (``Eq, X, Y)
-  | Iff P Q => return some (``Iff, P, Q)
+  let res ← match_expr type with
+  | CategoryTheory.Iso _ _ X Y => pure <| some (``CategoryTheory.Iso, X, Y)
+  | Eq _ X Y => pure <| some (``Eq, X, Y)
+  | Iff P Q => pure <| some (``Iff, P, Q)
   | _ =>
-    -- Try to match generic binary relation `R X Y`
     if type.isApp && type.getAppNumArgs >= 2 then
       let args := type.getAppArgs
       let rel := type.getAppFn.constName?
       if let some r := rel then
-        return some (r, args[args.size - 2]!, args[args.size - 1]!)
-    return none
+        pure <| some (r, args[args.size - 2]!, args[args.size - 1]!)
+      else pure none
+    else pure none
+  if let some (r, x, y) := res then
+    if relations.contains r then return some (r, x, y)
+  return none
 
 /--
 Instantiates a lemma with fresh level metavariables and performs a telescope.
@@ -148,7 +153,11 @@ The generalized rewrite function.
 -/
 partial def grw (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
   let ctx ← read
+  if ctx.depth > 20 then
+    trace[CatRw] m!"grw: maximum depth reached"
+    return none
   let expr ← instantiateMVars expr
+  if expr.isMVar then return none
   trace[CatRw] m!"grw {r_out} on {expr}"
   -- 1. Try if rule matches expr
   if r_out == ctx.rule.rel then
@@ -157,45 +166,40 @@ partial def grw (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
       let rhs ← instantiateMVars (← solveInstances ctx.rule.rhs)
       trace[CatRw] m!"grw: matched rule {ctx.rule.lhs} -> {rhs}"
       return some { expr' := rhs, proof }
-  -- 2. Try lifting lemmas
+  -- 2. Try lifting lemmas.
   for lemmaName in ctx.isoMakerLemmas do
     let state ← saveState
     try
       let res ← withLemma lemmaName fun args resultType => do
         let resultTypeWhnf ← whnf (← instantiateMVars resultType)
-        if let some (r_res, lhs, rhs) ← getRelInfo? resultTypeWhnf then
-          let isSymm := ctx.relations.find? r_res |>.map (·.symm.isSome) |>.getD false
-          let sides := if isSymm then [(lhs, rhs, false), (rhs, lhs, true)] else [(lhs, rhs, false)]
-          for (l, r, reverse) in sides do
-            let sideState ← saveState
-            if r_res == r_out && (← withReducible (isDefEq l expr)) then
-               let mut rewrote := false
-               for arg in args do
-                 let argType ← whnf (← instantiateMVars (← inferType arg))
-                 if let some (r_arg, argLhs, _) ← getRelInfo? argType then
-                   if let some res ← grw r_arg argLhs then
-                     if ← isDefEq argType (← inferType res.proof) then
-                        arg.mvarId!.assign res.proof
-                        rewrote := true
+        if let some (r_res, lhs, rhs) ← getRelInfo? ctx.relations resultTypeWhnf then
+          if r_res == r_out && (← withReducible (isDefEq lhs expr)) then
+             let mut rewrote := false
+             for arg in args do
+               let argType ← whnf (← instantiateMVars (← inferType arg))
+               if let some (r_arg, argLhs, _) ← getRelInfo? ctx.relations argType then
+                 let inner := grw r_arg argLhs
+                 if let some res ← withReader (fun c => { c with depth := c.depth + 1 }) inner then
+                   if ← isDefEq argType (← inferType res.proof) then
+                      arg.mvarId!.assign res.proof
+                      rewrote := true
                    else
-                     -- Use refl
-                     if let some relInfo := ctx.relations.find? r_arg then
-                        let reflProof ← mkAppM relInfo.refl #[argLhs]
-                        if ← isDefEq argType (← inferType reflProof) then
-                           arg.mvarId!.assign reflProof
-                     else
-                        pure ()
-               if rewrote then
-                 let optArgs ← finalizeLemmaArgs args
-                 let mut proof ← mkAppOptM lemmaName optArgs
-                 if reverse then
-                   let symm := ctx.relations.find? r_res |>.get! |>.symm.get!
-                   proof ← mkAppM symm #[proof]
-                 let rhsInst ← instantiateMVars (← solveInstances r)
-                 let proofInst ← instantiateMVars proof
-                 trace[CatRw] m!"grw: applied {lemmaName}, newExpr := {rhsInst}"
-                 return some { expr' := rhsInst, proof := proofInst }
-            restoreState sideState
+                      if let some relInfo := ctx.relations.find? r_arg then
+                         let reflProof ← mkAppM relInfo.refl #[argLhs]
+                         if ← isDefEq argType (← inferType reflProof) then
+                            arg.mvarId!.assign reflProof
+                 else
+                    if let some relInfo := ctx.relations.find? r_arg then
+                       let reflProof ← mkAppM relInfo.refl #[argLhs]
+                       if ← isDefEq argType (← inferType reflProof) then
+                          arg.mvarId!.assign reflProof
+             if rewrote then
+               let optArgs ← finalizeLemmaArgs args
+               let proof ← mkAppOptM lemmaName optArgs
+               let rhsInst ← instantiateMVars (← solveInstances rhs)
+               let proofInst ← instantiateMVars proof
+               trace[CatRw] m!"grw: applied {lemmaName}, newExpr := {rhsInst}"
+               return some { expr' := rhsInst, proof := proofInst }
         return none
       if let some r := res then return some r
       restoreState state
@@ -208,15 +212,15 @@ Dispatches the tactic based on the goal type.
 def evalTargetV2 (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId) := do
   let ctx ← read
   let target ← instantiateMVars target
-  if let some (r_goal, lhs, rhs) ← getRelInfo? target then
+  if let some (r_goal, lhs, rhs) ← getRelInfo? ctx.relations target then
     if let some relInfo := ctx.relations.find? r_goal then
       let rhsrw ← grw r_goal rhs
       let mut lhsrw := none
-      if let some _ := relInfo.symm then
+      if relInfo.symm.isSome then
         if let some res ← grw r_goal lhs then
           lhsrw := some res
       if rhsrw.isNone && lhsrw.isNone then
-         throwError "cat_rw could not apply the rule to either side of the goal"
+         return #[goal]
       let newLhs ← instantiateMVars (if let some l := lhsrw then l.expr' else lhs)
       let newRhs ← instantiateMVars (if let some r := rhsrw then r.expr' else rhs)
       trace[CatRw] m!"evalTargetV2: newLhs := {newLhs}, newRhs := {newRhs}"
@@ -224,35 +228,34 @@ def evalTargetV2 (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId) := do
       let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
       let mut finalProof := newGoal
       if let some r_res := rhsrw then
-        let symm ← match relInfo.symm with
-          | some s => pure s
-          | none => throwError "Relation {r_goal} is not symmetric"
-        let trans ← match relInfo.trans with
-          | some t => pure t
-          | none => throwError "Relation {r_goal} is not transitive"
+        let symm := relInfo.symm.get!
+        let trans := relInfo.trans.get!
         let isoR_symm ← mkAppM symm #[r_res.proof]
         finalProof ← mkAppM trans #[finalProof, isoR_symm]
       if let some l_res := lhsrw then
-        let trans ← match relInfo.trans with
-          | some t => pure t
-          | none => throwError "Relation {r_goal} is not transitive"
+        let trans := relInfo.trans.get!
         finalProof ← mkAppM trans #[l_res.proof, finalProof]
-      goal.assign (← instantiateMVars finalProof)
+      let finalProofInst ← solveInstances finalProof
+      goal.assign (← instantiateMVars finalProofInst)
       if ← withReducible (isDefEq newLhs newRhs) then
          trace[CatRw] m!"evalTargetV2: newLhs and newRhs are defeq"
          let reflProof ← mkAppM relInfo.refl #[newLhs]
-         newGoal.mvarId!.assign reflProof
+         if ← isDefEq (← inferType newGoal) (← inferType reflProof) then
+            newGoal.mvarId!.assign reflProof
          return #[]
       else
          return #[newGoal.mvarId!]
-  -- Non-relation goal or non-registered relation: try Iff
   let r_goal := ``Iff
   if let some res ← grw r_goal target then
      let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
      let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
-     goal.assign (← instantiateMVars proof)
+     let proofInst ← solveInstances proof
+     goal.assign (← instantiateMVars proofInst)
+     if ← withReducible (isDefEq (← instantiateMVars res.expr') (mkConst ``True)) then
+        newGoal.mvarId!.assign (mkConst ``True.intro)
+        return #[]
      return #[newGoal.mvarId!]
-  throwError "cat_rw could not rewrite the goal {target}"
+  return #[goal]
 
 private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
   let raw ← Term.elabTerm stx[1]! none
@@ -260,13 +263,12 @@ private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
   let (args, _, _) ← forallMetaTelescopeReducing rawType
   let proof := mkAppN raw args
   let type ← inferType proof
-  if let some (rel, lhs, rhs) ← getRelInfo? type then
+  let env ← getEnv
+  let relations := relExt.getState env
+  if let some (rel, lhs, rhs) ← getRelInfo? relations type then
     if stx[0]!.isNone then
       return { proof, rel, lhs, rhs }
     else
-      -- symmetry
-      let env ← getEnv
-      let relations := relExt.getState env
       if let some relInfo := relations.find? rel then
         if let some symm := relInfo.symm then
           let symmProof ← mkAppM symm #[proof]

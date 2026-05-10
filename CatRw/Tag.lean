@@ -5,7 +5,10 @@ open AlgebraicGeometry CategoryTheory
 
 variable {X Y : Scheme} (φ : X ≅ Y) {C : Type*} [Category* C]
 
-set_option trace.CatRw true
+set_option linter.style.setOption false
+set_option trace.CatRw false
+set_option CatRw.trace_iso_expr true
+set_option warn.sorry false
 
 include φ
 
@@ -35,8 +38,6 @@ def TopCat.sheafToPresheaf_iso {X : TopCat} {F G : Sheaf C X} (φ : F ≅ G) :
 example {X : TopCat} {F G : TopCat.Sheaf C X} (φ : F ≅ G) : Limits.IsZero F.obj := by
   cat_rw [φ]
   sorry
-
-#check X ⨯ Y
 
 noncomputable
 example {X Y Z : AddCommGrpCat} (φ : Y ≅ X) : X ⨯ Z ≅ Y ⨯ Z := by

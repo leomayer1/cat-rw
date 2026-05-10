@@ -490,6 +490,9 @@ def evalCatRw
   let ctx := { rules, isoMakerLemmas, isoIffLemmas }
   trace[CatRw] m!"evalCatRw: starting with {rules.size} rules on target {targetInst}"
   let newGoals ← liftMetaM <| ReaderT.run (evalTarget goal targetInst) ctx
+  if CatRw.trace_iso_expr.get <| ← getOptions then
+    let val ← instantiateMVars (mkMVar goal)
+    Lean.logInfo m!"iso := {val}" -- {← goal.getType}
   replaceMainGoal newGoals.toList
 
 end CatRw

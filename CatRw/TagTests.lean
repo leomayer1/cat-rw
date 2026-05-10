@@ -10,7 +10,10 @@ Then it checks if LHS is of the form x ⨿ y.
 Finally it tests a list of known lemmas.
 The goal is to replace the first three steps, and to have the tactic be flexible enough
 to cover the first three cases by the tagged lemmas. -/
-set_option trace.CatRw true
+set_option linter.style.setOption false
+set_option trace.CatRw false
+set_option CatRw.trace_iso_expr true
+set_option warn.sorry false
 
 @[cat_rw_iso]
 def obj_iso {C D : Type*} [Category* C] [Category* D] (F : C ⥤ D) {x x' : C} (φ : x ≅ x') :

@@ -7,7 +7,10 @@ import Mathlib.CategoryTheory.Equivalence
 
 open CategoryTheory Limits
 
-set_option trace.CatRw true
+set_option linter.style.setOption false
+set_option trace.CatRw false
+set_option CatRw.trace_iso_expr true
+set_option warn.sorry false
 
 variable {C : Type*} [Category* C] [HasProducts C]
 variable {D : Type*} [Category* D] [HasProducts D]
@@ -37,7 +40,4 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
 
 noncomputable
 example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
-  cat_rw [ha, hb]
-  cat_rw [prod.braiding a']
-  cat_rw [prod.associator]
-  cat_rw [prod.braiding a']
+  cat_rw [ha, hb, prod.braiding a', prod.associator, prod.braiding a']

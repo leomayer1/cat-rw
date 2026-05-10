@@ -12,7 +12,9 @@ open CategoryTheory Limits
 variable {C : Type*} [Category C] [HasBinaryProducts C] [HasBinaryCoproducts C] [HasZeroObject C]
 variable {D : Type*} [Category D] [HasBinaryProducts D] [HasBinaryCoproducts D] [HasZeroObject D]
 
-set_option trace.CatRw true
+set_option linter.style.setOption false
+set_option trace.CatRw false
+set_option warn.sorry false
 
 /-- Deeply nested binary product and coproduct rewrite. -/
 noncomputable

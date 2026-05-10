@@ -12,6 +12,15 @@ variable {D : Type*} [Category* D]
 variable {F G : C ⥤ D}
 variable (a a' b c b' : C)
 
+set_option linter.style.setOption false
+set_option trace.CatRw false
+
+set_option warn.sorry false
+
+example (ha : a ≅ a') : IsZero (a ⨿ b) := by
+  cat_rw [ha]
+  admit
+
 example (ha : a ≅ a') : IsZero (a ⨯ b) := by
   cat_rw [ha]
   -- cat_rw [ha] should make the goal ⊢ IsZero (a' ⨯ b)

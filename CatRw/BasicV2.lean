@@ -395,32 +395,45 @@ private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
 declare_config_elab elabConfig Config
 
 /-- The main entry point for the `cat_rw` tactic. -/
-def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq)
-    (loc : Location) (config : Config) : TacticM Unit := withMainContext do
-  let rules ← match rulesStx with
-    | `(rwRuleSeq| [$rules,*]) => rules.getElems.mapM parseRuleV2
-    | _ => throwUnsupportedSyntax
+def evalCatRwV2 (stx : Syntax) (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq)
+    (loc : Location) (config : Config) : TacticM Unit := do
+  let lbrak := rulesStx.raw[0]!
+  let rulesAndSeps := rulesStx.raw[1]!.getArgs
+  let numRules := (rulesAndSeps.size + 1) / 2
+  withTacticInfoContext (mkNullNode #[stx[0]!, lbrak]) (pure ())
   let env ← getEnv
   let isoMakerLemmas := catRwIsoAttr.getDecls env ++ catRwAttr.getDecls env
   let relations := relExt.getState env
   let occCountRef ← IO.mkRef {}
-  let originalGoal ← getMainGoal
-  let rewrite (fvarId? : Option FVarId) : TacticM Unit := do
-    let mut fvarId? := fvarId?
-    for rule in rules do
-      let goal ← getMainGoal
-      occCountRef.set {}
-      let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
-      let (gs, nextFVarId?) ← liftMetaM <| ReaderT.run (evalRewrite goal fvarId?) ctx
-      replaceMainGoal gs.toList
-      fvarId? := nextFVarId?
-  withLocation loc
-    (fun fvarId => rewrite (some fvarId))
-    (rewrite none)
-    (fun _ => throwError "failed to rewrite")
+  let originalGoal? ← try some <$> getMainGoal catch _ => pure none
+  for i in [:numRules] do
+    let ruleStx := rulesAndSeps[i * 2]!
+    let sep := rulesAndSeps.getD (i * 2 + 1) Syntax.missing
+    withTacticInfoContext (mkNullNode #[ruleStx, sep]) do
+      withRef ruleStx do
+        let rule ← withMainContext <| parseRuleV2 ruleStx
+        withEnableInfoTree false do
+          withMainContext do
+            if (← getGoals).isEmpty then
+              throwError "all goals have already been solved"
+            withLocation loc
+              (fun fvarId => do
+                let goal ← getMainGoal
+                occCountRef.set {}
+                let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
+                let (gs, _) ← liftMetaM <| ReaderT.run (evalRewrite goal (some fvarId)) ctx
+                replaceMainGoal gs.toList)
+              (do
+                let goal ← getMainGoal
+                occCountRef.set {}
+                let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
+                let (gs, _) ← liftMetaM <| ReaderT.run (evalRewrite goal none) ctx
+                replaceMainGoal gs.toList)
+              (fun _ => throwError "failed to rewrite")
   if CatRw.trace_iso_expr.get <| ← getOptions then
-    let val ← liftMetaM <| instantiateMVars (mkMVar originalGoal)
-    Lean.logInfo m!"iso := {val}"
+    if let some originalGoal := originalGoal? then
+      let val ← liftMetaM <| instantiateMVars (mkMVar originalGoal)
+      Lean.logInfo m!"iso := {val}"
 
 end CatRw
 
@@ -431,10 +444,10 @@ attribute [cat_rw_iso] congrArg
 It propagates rewrites through expressions using congruence/lifting lemmas.
 Supports `at` location and `config := { occs := ... }`.
 -/
-elab "cat_rw " cfg:Parser.Tactic.optConfig rules:Parser.Tactic.rwRuleSeq
+elab stx:"cat_rw " cfg:Parser.Tactic.optConfig rules:Parser.Tactic.rwRuleSeq
     loc:(Parser.Tactic.location)? : tactic => do
   let cfg ← CatRw.elabConfig cfg
   let loc := match loc with
     | some stx => expandLocation stx
     | none => Location.targets #[] true
-  CatRw.evalCatRwV2 rules loc cfg
+  CatRw.evalCatRwV2 stx rules loc cfg

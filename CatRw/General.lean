@@ -123,3 +123,79 @@ tactic_impl (rule : r₁ X X') (goal) :=
       return [newGoal]
   throw error
 -/
+
+/-
+## Real Implementation (V2)
+
+The actual implementation in `BasicV2.lean` refines the above algorithm with 
+better support for symmetry, proper metavariable handling, and a cleaner 
+dispatch mechanism.
+
+### Generalized Rewrite (`grw`)
+
+```lean
+grw (r_out) (expr) : Option (Rewrote) :=
+  -- 1. Direct match with the user-provided rule
+  if r_out == rule.rel and rule.lhs matches expr
+    return some { expr' := rule.rhs, proof := rule.proof }
+
+  -- 2. Recursive traversal using registered lifting lemmas
+  for each lemmaName in isoMakerLemmas {
+    withLemma lemmaName fun args resultType =>
+      if resultType matches (r_res lhs rhs) and r_res == r_out {
+        -- Support matching either side if the relation is symmetric
+        matchedLhs := lhs matches expr
+        matchedRhs := !matchedLhs && (r_out is symmetric) && (rhs matches expr)
+
+        if matchedLhs or matchedRhs {
+          for each arg in args {
+            if arg.type matches (r_arg argLhs argRhs) {
+              -- Attempt to rewrite either side of the argument relation
+              if res := grw(r_arg, argLhs)
+                assign res.proof to arg
+              else if r_arg is symmetric and res := grw(r_arg, argRhs)
+                assign symm(res.proof) to arg
+              else
+                assign refl(argLhs) to arg
+            }
+          }
+          if any argument was successfully rewritten {
+            proof := apply lemma to args
+            if matchedRhs then proof := symm(proof)
+            return some { expr' := new_rhs, proof }
+          }
+        }
+      }
+  }
+```
+
+### Tactic Dispatch (`evalTargetV2`)
+
+```lean
+evalTargetV2 (goal) :=
+  -- Case A: Goal is a registered binary relation (e.g., X ≅ Y, n = m)
+  if goal.type matches (r_goal lhs rhs) {
+    rhsrw := grw(r_goal, rhs)
+    lhsrw := if r_goal is symmetric then grw(r_goal, lhs) else none
+
+    if (rhsrw or lhsrw) {
+      newGoal := fresh_mvar(r_goal newLhs newRhs)
+      -- Construct proof: lhs_proof . newGoal . rhsrw_proof.symm
+      finalProof := newGoal
+      if rhsrw then finalProof := trans(finalProof, symm(rhsrw.proof))
+      if lhsrw then finalProof := trans(lhsrw.proof, finalProof)
+      
+      goal.assign(finalProof)
+      return [newGoal]
+    }
+  }
+
+  -- Case B: Goal is a predicate (rewrite via Iff)
+  if res := grw(Iff, goal.type) {
+    newGoal := fresh_mvar(res.expr')
+    goal.assign(Iff.mpr res.proof newGoal)
+    return [newGoal]
+  }
+```
+-/
+

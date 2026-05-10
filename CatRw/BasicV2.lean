@@ -333,6 +333,9 @@ def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) :
       let newGs ← liftMetaM <| ReaderT.run (evalTargetV2 g t) ctx
       nextGoals := nextGoals ++ newGs
     currentGoals := nextGoals
+  if CatRw.trace_iso_expr.get <| ← getOptions then
+    let val ← instantiateMVars (mkMVar goal)
+    Lean.logInfo m!"iso := {val}" -- {← goal.getType}
   replaceMainGoal currentGoals.toList
 
 /--

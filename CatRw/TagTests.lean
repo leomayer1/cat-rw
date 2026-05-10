@@ -13,7 +13,7 @@ Finally it tests a list of known lemmas.
 The goal is to replace the first three steps, and to have the tactic be flexible enough
 to cover the first three cases by the tagged lemmas. -/
 set_option linter.style.setOption false
-set_option trace.CatRw true
+set_option trace.CatRw false
 set_option CatRw.trace_iso_expr true
 set_option warn.sorry false
 

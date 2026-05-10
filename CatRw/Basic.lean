@@ -132,13 +132,23 @@ private def mkReflIso (e : Expr) : MetaM Expr :=
 private def mkFunctorObj (F X : Expr) : MetaM Expr :=
   mkAppM ``CategoryTheory.Functor.obj #[F, X]
 
+private def getProdInst (X Y : Expr) : MetaM Expr := do
+  withReducibleAndInstances <|
+    synthInstance (← mkAppM ``CategoryTheory.Limits.HasBinaryProduct #[X, Y])
+
+private def getCoprodInst (X Y : Expr) : MetaM Expr := do
+  withReducibleAndInstances <|
+    synthInstance (← mkAppM ``CategoryTheory.Limits.HasBinaryCoproduct #[X, Y])
+
 /-- Creates a product of two objects `X ⨯ Y`. -/
-private def mkProd (X Y : Expr) : MetaM Expr :=
-  mkAppOptM ``CategoryTheory.Limits.prod #[none, none, some X, some Y, none]
+private def mkProd (X Y : Expr) : MetaM Expr := do
+  let inst ← getProdInst X Y
+  mkAppOptM ``CategoryTheory.Limits.prod #[none, none, some X, some Y, some inst]
 
 /-- Creates a coproduct of two objects `X ⨿ Y`. -/
-private def mkCoprod (X Y : Expr) : MetaM Expr :=
-  mkAppOptM ``CategoryTheory.Limits.coprod #[none, none, some X, some Y, none]
+private def mkCoprod (X Y : Expr) : MetaM Expr := do
+  let inst ← getCoprodInst X Y
+  mkAppOptM ``CategoryTheory.Limits.coprod #[none, none, some X, some Y, some inst]
 
 /--
 Try a tagged iso-maker lemma on a recursively produced isomorphism.
@@ -191,7 +201,8 @@ It checks:
 4. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
 5. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
 -/
-private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
+private partial def rewriteOnce
+    (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
   trace[CatRw] m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
   if let some result ← tryWhole rule e then
     return some result
@@ -233,17 +244,26 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
   if e.isAppOfArity ``CategoryTheory.Limits.prod 5 then
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
+    let sourceInst := args[4]!
     if let some result ← rewriteOnce rule X then
       trace[CatRw] m!"prod.mapIso {result.iso} rfl({Y})"
+      let targetInst ← getProdInst result.newExpr Y
+      let reflY ← mkReflIso Y
       return some {
         newExpr := ← mkProd result.newExpr Y
-        iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[result.iso, ← mkReflIso Y]
+        iso := ← mkAppOptM ``CategoryTheory.Limits.prod.mapIso
+          #[none, none, some X, some Y, some result.newExpr, some Y,
+            some sourceInst, some targetInst, some result.iso, some reflY]
       }
     if let some result ← rewriteOnce rule Y then
       trace[CatRw] m!"prod.mapIso rfl({X}) {result.iso}"
+      let targetInst ← getProdInst X result.newExpr
+      let reflX ← mkReflIso X
       return some {
         newExpr := ← mkProd X result.newExpr
-        iso := ← mkAppM ``CategoryTheory.Limits.prod.mapIso #[← mkReflIso X, result.iso]
+        iso := ← mkAppOptM ``CategoryTheory.Limits.prod.mapIso
+          #[none, none, some X, some Y, some X, some result.newExpr,
+            some sourceInst, some targetInst, some reflX, some result.iso]
       }
   /-
     Check if `e` is an application of `CategoryTheory.Limits.coprod`.
@@ -257,28 +277,41 @@ private partial def rewriteOnce (rule : Rule) (e : Expr) : MetaM (Option Rewrite
   if e.isAppOfArity ``CategoryTheory.Limits.coprod 5 then
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
+    let sourceInst := args[4]!
     if let some result ← rewriteOnce rule X then
       trace[CatRw] m!"coprod.mapIso {result.iso} rfl({Y})"
+      let targetInst ← getCoprodInst result.newExpr Y
+      let reflY ← mkReflIso Y
       return some {
         newExpr := ← mkCoprod result.newExpr Y
-        iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[result.iso, ← mkReflIso Y]
+        iso := ← mkAppOptM ``CategoryTheory.Limits.coprod.mapIso
+          #[none, none, some X, some Y, some result.newExpr, some Y,
+            some sourceInst, some targetInst, some result.iso, some reflY]
       }
     if let some result ← rewriteOnce rule Y then
       trace[CatRw] m!"coprod.mapIso rfl({X}) {result.iso}"
+      let targetInst ← getCoprodInst X result.newExpr
+      let reflX ← mkReflIso X
       return some {
         newExpr := ← mkCoprod X result.newExpr
-        iso := ← mkAppM ``CategoryTheory.Limits.coprod.mapIso #[← mkReflIso X, result.iso]
+        iso := ← mkAppOptM ``CategoryTheory.Limits.coprod.mapIso
+          #[none, none, some X, some Y, some X, some result.newExpr,
+            some sourceInst, some targetInst, some reflX, some result.iso]
       }
-  for arg in args do
-    let state ← saveState
-    try
-      if let some result ← rewriteOnce rule arg then
-        if let some lifted ← tryIsoMakerLemmas e result then
-          return some lifted
-      restoreState state
-    catch err =>
-      trace[CatRw] m!"tagged iso-maker search failed for argument {arg} of {e}: {err.toMessageData}"
-      restoreState state
+  if !(e.isAppOfArity ``CategoryTheory.Functor.obj 6) &&
+      !(e.isAppOfArity ``CategoryTheory.Limits.prod 5) &&
+      !(e.isAppOfArity ``CategoryTheory.Limits.coprod 5) then
+    if let some arg := args.back? then
+      let state ← saveState
+      try
+        if let some result ← rewriteOnce rule arg then
+          if let some lifted ← tryIsoMakerLemmas e result then
+            return some lifted
+        restoreState state
+      catch err =>
+        trace[CatRw]
+          m!"tagged iso-maker search failed for argument {arg} of {e}: {err.toMessageData}"
+        restoreState state
   trace[CatRw] m!"rwOnce return none"
   return none
 

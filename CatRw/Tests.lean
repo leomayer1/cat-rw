@@ -7,8 +7,8 @@ import Mathlib.CategoryTheory.Equivalence
 
 open CategoryTheory Limits
 
-variable {C : Type*} [Category* C] [HasProducts C] [HasBinaryCoproducts C]
-variable {D : Type*} [Category* D]
+variable {C : Type*} [Category* C] [HasProducts C] [HasCoproducts C]
+variable {D : Type*} [Category* D] [HasProducts D]
 variable {E : Type*} [Category* E]
 variable {F G : C ⥤ D} {H K : D ⥤ E}
 variable (a a' b b' c : C)

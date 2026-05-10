@@ -34,3 +34,21 @@ example {X : TopCat} {F G : TopCat.Sheaf C X} (φ : F ≅ G) : Limits.IsZero F.o
   cat_rw [φ]
 
   sorry
+
+#check X ⨯ Y
+
+noncomputable
+example {X Y Z : AddCommGrpCat} (φ : Y ≅ X) : X ⨯ Z ≅ Y ⨯ Z := by
+  cat_rw [φ]
+
+noncomputable
+example {X Y Z : Scheme} (φ : Y ≅ X) : X ⨯ Z ≅ Y ⨯ Z := by
+  cat_rw [φ]
+
+noncomputable
+example {X Y Z : Scheme} (φ : Y ≅ X) : X ⨯ Z ≅ Y ⨯ Z := by
+  cat_rw [← φ]
+
+noncomputable
+example {X Y Z : Scheme} (φ : Y ≅ X) : X ⨿ Z ≅ Y ⨿ Z := by
+  cat_rw [φ]

@@ -24,13 +24,14 @@ noncomputable
 example {R S : CommRingCat} : Scheme.Spec.obj ((op R) ⨿ (op S)) ≅ Spec R ⨿ Spec S := by
   cat_rw [Limits.PreservesColimitPair.iso Scheme.Spec ..]
 
-#check Limits.PreservesLimitPair.iso
-
 noncomputable
 example {A B : GrpCat} : (forget _).obj (A ⨯ B) ≅ (forget _).obj A ⨯ (forget _).obj B := by
-  cat_rw [Limits.PreservesLimitPair.iso ..]
+  cat_rw [Limits.PreservesLimitPair.iso]
 
 open Scheme.Modules
+
+#check Limits.PreservesLimitPair.iso
+#check pullbackComp
 
 noncomputable
 example {X Y Z : Scheme} (f : X ⟶ Y) (g : Y ⟶ Z) (M N P : Z.Modules) (φ : M ≅ N)

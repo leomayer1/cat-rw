@@ -1,4 +1,4 @@
-import CatRw.Basic
+import CatRw.BasicV2
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.Products
 
@@ -12,7 +12,10 @@ Then it checks if LHS is of the form x ⨿ y.
 Finally it tests a list of known lemmas.
 The goal is to replace the first three steps, and to have the tactic be flexible enough
 to cover the first three cases by the tagged lemmas. -/
-set_option trace.CatRw true
+set_option linter.style.setOption false
+set_option trace.CatRw false
+set_option CatRw.trace_iso_expr true
+set_option warn.sorry false
 
 /-
 Tagging this lemma results in terms with somewhat bad definitional equalities.
@@ -27,7 +30,7 @@ def obj_iso {C D : Type*} [Category* C] [Category* D] (F : C ⥤ D) {x x' : C} (
 The goal is to make it work because obj_iso has been tagged. -/
 example {C D : Type*} [Category* C] [Category* D] (F : C ⥤ D) {x y z : C}
     (φ : x ≅ y) (ψ : y ≅ z) : F.obj x ≅ F.obj z := by
-  cat_rw [φ, ψ]
+  cat_rwv2 [φ, ψ]
 
 @[cat_rw_iso]
 def obj_iso' {C D : Type*} [Category* C] [Category* D] (F G : C ⥤ D) {x : C} (φ : F ≅ G) :
@@ -37,7 +40,7 @@ def obj_iso' {C D : Type*} [Category* C] [Category* D] (F G : C ⥤ D) {x : C} (
 applying natural isomorphisms. The goal is to make it work because obj_iso' has been tagged. -/
 example {C D E : Type*} [Category* C] [Category* D] [Category* E] (F F' : C ⥤ D) (G G' : D ⥤ E)
     {x : C} (φ : F ≅ F') (ψ : G ≅ G') : G.obj (F.obj x) ≅ G'.obj (F'.obj x) := by
-  cat_rw [φ, ψ]
+  cat_rwv2 [φ, ψ]
 
 @[cat_rw_iso]
 noncomputable
@@ -69,4 +72,4 @@ in both the LHS and the RHS
 -/
 
 example {C : Type*} [Category* C] (a b c : C) (f : a ≅ b) (g : c ≅ b) : a ≅ c := by
-  cat_rw [g, ←f]
+  cat_rwv2 [g, ←f]

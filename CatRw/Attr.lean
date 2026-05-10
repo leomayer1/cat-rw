@@ -61,3 +61,8 @@ initialize catRwAttr : CatRwAttribute ←
 initialize catRwIsoAttr : CatRwAttribute ←
   registerCatRwAttribute `cat_rw_iso
     "lemmas used by the `cat_rw` tactic to lift isomorphisms through expressions"
+
+register_option CatRw.trace_iso_expr : Bool := {
+  defValue := false
+  descr := "print the isomorphism produced by cat_rw"
+}

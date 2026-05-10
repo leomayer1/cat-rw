@@ -2,8 +2,6 @@ import CatRw.TagTests
 
 open CategoryTheory Limits
 
-set_option trace.CatRw true
-
 variable {C : Type*} [Category* C] [HasProducts C]
 variable {D : Type*} [Category* D] [HasProducts D]
 variable {E : Type*} [Category* E]
@@ -39,7 +37,7 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
 
 noncomputable
 example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
-  cat_rw [←ha, ←hb, prod.braiding a b, prod.associator, prod.braiding a c]
+  cat_rw [← ha, ← hb, prod.braiding a b, prod.associator, prod.braiding a c]
 
 example (ha : a ≅ a') (hF : F ≅ G) (hH : H ≅ K) (h₂ : G.obj a' ≅ G.obj b) :
     K.obj (G.obj a) ≅ H.obj (F.obj b) := by

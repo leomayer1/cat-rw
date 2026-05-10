@@ -6,7 +6,7 @@ open CategoryTheory Limits AlgebraicGeometry
 variable {C : Type*} [Category* C] (X Y : C) (φ : X ≅ Y) {D : Type*} [Category* D] (F : C ⥤ D)
 
 set_option linter.style.setOption false
-set_option trace.CatRw false
+set_option trace.CatRw true
 set_option CatRw.trace_iso_expr true
 set_option warn.sorry false
 

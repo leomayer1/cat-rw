@@ -17,6 +17,7 @@ initialize registerTraceClass `CatRw
 
 /--
 Information about a binary relation supported by `cat_rw`.
+Contains names of lemmas for basic properties.
 -/
 structure RelInfo where
   name : Name
@@ -34,7 +35,7 @@ private def initialRelMap : NameMap RelInfo :=
   m
 
 /--
-A register for relations.
+A register for relations. Used to determine which relations the tactic can reason about.
 -/
 initialize relExt : SimpleScopedEnvExtension RelInfo (NameMap RelInfo) ←
   registerSimpleScopedEnvExtension {
@@ -43,6 +44,7 @@ initialize relExt : SimpleScopedEnvExtension RelInfo (NameMap RelInfo) ←
     addEntry := fun map rel => map.insert rel.name rel
   }
 
+/-- Registers a new binary relation for use with `cat_rw`. -/
 def registerRel (info : RelInfo) : CoreM Unit := do
   modifyEnv fun env => relExt.addEntry env info
 
@@ -59,18 +61,14 @@ structure RuleV2 where
   /-- The RHS of the rule. -/
   rhs : Expr
 
-/--
-Result of a generalized rewrite.
--/
+/-- Result of a generalized rewrite. -/
 structure Rewrote where
   /-- The new expression. -/
   expr' : Expr
   /-- The proof of `r expr expr'`. -/
   proof : Expr
 
-/--
-Context for the `grw` algorithm.
--/
+/-- Context for the `grw` algorithm. -/
 structure ContextV2 where
   rule : RuleV2
   isoMakerLemmas : Array Name
@@ -85,10 +83,10 @@ instance : MonadBacktrack Meta.SavedState CatRwM2 where
 
 /--
 Extracts the relation and endpoints from a type.
-Supports `X ≅ Y`, `X = Y`, `P ↔ Q`.
-Only returns if the relation is registered.
+Supports `X ≅ Y`, `X = Y`, `P ↔ Q` and any registered binary relations.
 -/
-def getRelInfo? (relations : NameMap RelInfo) (type : Expr) : MetaM (Option (Name × Expr × Expr)) := do
+def getRelInfo? (relations : NameMap RelInfo) (type : Expr) :
+    MetaM (Option (Name × Expr × Expr)) := do
   let type ← whnf type
   let res ← match_expr type with
   | CategoryTheory.Iso _ _ X Y => pure <| some (``CategoryTheory.Iso, X, Y)
@@ -99,16 +97,16 @@ def getRelInfo? (relations : NameMap RelInfo) (type : Expr) : MetaM (Option (Nam
       let args := type.getAppArgs
       let rel := type.getAppFn.constName?
       if let some r := rel then
-        pure <| some (r, args[args.size - 2]!, args[args.size - 1]!)
+        let lhs := args[args.size - 2]!
+        let rhs := args[args.size - 1]!
+        pure <| some (r, lhs, rhs)
       else pure none
     else pure none
   if let some (r, x, y) := res then
     if relations.contains r then return some (r, x, y)
   return none
 
-/--
-Instantiates a lemma with fresh level metavariables and performs a telescope.
--/
+/-- Instantiates a lemma with fresh level metavariables and performs a telescope. -/
 private def withLemma (lemmaName : Name) (k : Array Expr → Expr → CatRwM2 (Option α)) :
     CatRwM2 (Option α) := do
   let info ← getConstInfo lemmaName
@@ -117,9 +115,7 @@ private def withLemma (lemmaName : Name) (k : Array Expr → Expr → CatRwM2 (O
   let (args, _, resultType) ← forallMetaTelescope type
   k args resultType
 
-/--
-Attempts to resolve all instance metavariables within an expression.
--/
+/-- Attempts to resolve all instance metavariables within an expression. -/
 private def solveInstances (e : Expr) : MetaM Expr := do
   let e ← instantiateMVars e
   let mvars ← getMVars e
@@ -133,9 +129,7 @@ private def solveInstances (e : Expr) : MetaM Expr := do
         catch _ => pure ()
   instantiateMVars e
 
-/--
-Finalizes the arguments for a lemma by synthesizing instances and solving metavariables.
--/
+/-- Finalizes the arguments for a lemma by synthesizing instances and solving metavariables. -/
 private def finalizeLemmaArgs (args : Array Expr) : MetaM (Array (Option Expr)) := do
   for arg in args do
     let mvarId := arg.mvarId!
@@ -147,116 +141,157 @@ private def finalizeLemmaArgs (args : Array Expr) : MetaM (Array (Option Expr)) 
     let argInst ← solveInstances arg
     if argInst.hasExprMVar then return none else return some argInst
 
-/--
-The generalized rewrite function.
-`grw r_out expr` returns a proof of `r_out expr expr'`.
--/
-partial def grw (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
+/-- Tries to match the user-provided rule directly against the expression. -/
+private def tryMatchRule (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
   let ctx ← read
-  if ctx.depth > 20 then
-    trace[CatRw] m!"grw: maximum depth reached"
-    return none
-  let expr ← instantiateMVars expr
-  if expr.isMVar then return none
-  trace[CatRw] m!"grw {r_out} on {expr}"
-  -- 1. Try if rule matches expr
   if r_out == ctx.rule.rel then
     if ← withReducible (isDefEq ctx.rule.lhs expr) then
       let proof ← instantiateMVars (← solveInstances ctx.rule.proof)
       let rhs ← instantiateMVars (← solveInstances ctx.rule.rhs)
-      trace[CatRw] m!"grw: matched rule {ctx.rule.lhs} -> {rhs}"
+      trace[CatRw] m!"matched rule: {ctx.rule.lhs} -> {rhs}"
       return some { expr' := rhs, proof }
-  -- 2. Try lifting lemmas.
-  for lemmaName in ctx.isoMakerLemmas do
-    let state ← saveState
-    try
-      let res ← withLemma lemmaName fun args resultType => do
-        let resultTypeWhnf ← whnf (← instantiateMVars resultType)
-        if let some (r_res, lhs, rhs) ← getRelInfo? ctx.relations resultTypeWhnf then
-          if r_res == r_out && (← withReducible (isDefEq lhs expr)) then
-             let mut rewrote := false
-             for arg in args do
-               let argType ← whnf (← instantiateMVars (← inferType arg))
-               if let some (r_arg, argLhs, _) ← getRelInfo? ctx.relations argType then
-                 let inner := grw r_arg argLhs
-                 if let some res ← withReader (fun c => { c with depth := c.depth + 1 }) inner then
-                   if ← isDefEq argType (← inferType res.proof) then
-                      arg.mvarId!.assign res.proof
-                      rewrote := true
-                   else
-                      if let some relInfo := ctx.relations.find? r_arg then
-                         let reflProof ← mkAppM relInfo.refl #[argLhs]
-                         if ← isDefEq argType (← inferType reflProof) then
-                            arg.mvarId!.assign reflProof
-                 else
-                    if let some relInfo := ctx.relations.find? r_arg then
-                       let reflProof ← mkAppM relInfo.refl #[argLhs]
-                       if ← isDefEq argType (← inferType reflProof) then
-                          arg.mvarId!.assign reflProof
-             if rewrote then
-               let optArgs ← finalizeLemmaArgs args
-               let proof ← mkAppOptM lemmaName optArgs
-               let rhsInst ← instantiateMVars (← solveInstances rhs)
-               let proofInst ← instantiateMVars proof
-               trace[CatRw] m!"grw: applied {lemmaName}, newExpr := {rhsInst}"
-               return some { expr' := rhsInst, proof := proofInst }
-        return none
-      if let some r := res then return some r
-      restoreState state
-    catch _ => restoreState state
   return none
+
+mutual
+/--
+The generalized rewrite function.
+`grw r_out expr` returns a proof of `r_out expr expr'`.
+Traverses the expression tree and applies rules or lifting lemmas.
+-/
+partial def grw (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
+  let ctx ← read
+  if ctx.depth > 20 then return none
+  let expr ← instantiateMVars expr
+  if expr.isMVar then return none
+  withTraceNode `CatRw (fun _ => return m!"grw {r_out} on {expr}") do
+    -- 1. Try if rule matches expr
+    if let some res ← tryMatchRule r_out expr then return some res
+    -- 2. Try lifting lemmas
+    for lemmaName in ctx.isoMakerLemmas do
+      let state ← saveState
+      try
+        if let some res ← tryApplyLemma lemmaName r_out expr then return some res
+        restoreState state
+      catch _ => restoreState state
+    return none
+
+/-- Attempts to apply a specific lifting lemma to the expression. -/
+private partial def tryApplyLemma (lemmaName : Name) (r_out : Name) (expr : Expr) :
+    CatRwM2 (Option Rewrote) := do
+  let ctx ← read
+  withLemma lemmaName fun args resultType => do
+    let resultTypeWhnf ← whnf (← instantiateMVars resultType)
+    let some (r_res, lhs, rhs) ← getRelInfo? ctx.relations resultTypeWhnf | return none
+    if r_res != r_out then return none
+    let relInfo := ctx.relations.find? r_res
+    let mut matchedLhs := ← withReducible (isDefEq lhs expr)
+    let mut matchedRhs := false
+    if !matchedLhs then
+      if let some ri := relInfo then
+        if let some _ := ri.symm then
+          matchedRhs := ← withReducible (isDefEq rhs expr)
+    if !matchedLhs && !matchedRhs then return none
+    let mut rewrote := false
+    for arg in args do
+      if ← processArg arg then rewrote := true
+    if rewrote then
+      let optArgs ← finalizeLemmaArgs args
+      let mut proof ← mkAppOptM lemmaName optArgs
+      let rhsFinal := if matchedLhs then rhs else lhs
+      if matchedRhs then
+        proof ← mkAppM relInfo.get!.symm.get! #[proof]
+      let rhsInst ← instantiateMVars (← solveInstances rhsFinal)
+      let proofInst ← instantiateMVars proof
+      trace[CatRw] m!"applied {lemmaName}: {expr} -> {rhsInst}"
+      return some { expr' := rhsInst, proof := proofInst }
+    return none
+
+/-- Processes a single argument of a lifting lemma, attempting to rewrite it. -/
+private partial def processArg (arg : Expr) : CatRwM2 Bool := do
+  let ctx ← read
+  let argType ← whnf (← instantiateMVars (← inferType arg))
+  let some (r_arg, argLhs, argRhs) ← getRelInfo? ctx.relations argType | return false
+  -- Try rewriting LHS
+  let nextCtx := { ctx with depth := ctx.depth + 1 }
+  if let some res ← withReader (fun _ => nextCtx) (grw r_arg argLhs) then
+    if ← isDefEq argType (← inferType res.proof) then
+      arg.mvarId!.assign res.proof
+      return true
+  -- Try rewriting RHS if relation is symmetric
+  if let some relInfoArg := ctx.relations.find? r_arg then
+    if let some symmName := relInfoArg.symm then
+      if let some res ← withReader (fun _ => nextCtx) (grw r_arg argRhs) then
+        let proof ← mkAppM symmName #[res.proof]
+        if ← isDefEq argType (← inferType proof) then
+          arg.mvarId!.assign proof
+          return true
+  -- Fallback: assign reflexivity
+  if let some relInfoArg := ctx.relations.find? r_arg then
+    let reflProof ← mkAppM relInfoArg.refl #[argLhs]
+    if ← isDefEq argType (← inferType reflProof) then
+      arg.mvarId!.assign reflProof
+  return false
+end
+
+/-- Handles goals that are registered binary relations (e.g., `X ≅ Y`). -/
+private def evalRelationGoal (goal : MVarId) (r_goal : Name) (lhs rhs : Expr) :
+    CatRwM2 (Array MVarId) := do
+  let ctx ← read
+  let relInfo := (ctx.relations.find? r_goal).get!
+  -- Rewrite both sides
+  let rhsrw ← grw r_goal rhs
+  let mut lhsrw := none
+  if relInfo.symm.isSome then
+    lhsrw ← grw r_goal lhs
+  if rhsrw.isNone && lhsrw.isNone then return #[goal]
+  let newLhs ← instantiateMVars (if let some l := lhsrw then l.expr' else lhs)
+  let newRhs ← instantiateMVars (if let some r := rhsrw then r.expr' else rhs)
+  trace[CatRw] m!"new goal sides: {newLhs}, {newRhs}"
+  let newTarget ← mkAppM r_goal #[newLhs, newRhs]
+  let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
+  -- Assemble the final proof: lhs_proof . new_goal . rhs_proof.symm
+  let mut finalProof := newGoal
+  if let some r_res := rhsrw then
+    let isoR_symm ← mkAppM relInfo.symm.get! #[r_res.proof]
+    finalProof ← mkAppM relInfo.trans.get! #[finalProof, isoR_symm]
+  if let some l_res := lhsrw then
+    finalProof ← mkAppM relInfo.trans.get! #[l_res.proof, finalProof]
+  goal.assign (← solveInstances finalProof)
+  -- Check if result is defeq
+  if ← withReducible (isDefEq newLhs newRhs) then
+    let reflProof ← mkAppM relInfo.refl #[newLhs]
+    if ← isDefEq (← inferType newGoal) (← inferType reflProof) then
+      newGoal.mvarId!.assign reflProof
+      return #[]
+  return #[newGoal.mvarId!]
+
+/-- Handles goals that are predicates (using `Iff` to transform them). -/
+private def evalPropGoal (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId) := do
+  let r_goal := ``Iff
+  if let some res ← grw r_goal target then
+    let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
+    let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
+    goal.assign (← solveInstances proof)
+    if ← withReducible (isDefEq (← instantiateMVars res.expr') (mkConst ``True)) then
+      newGoal.mvarId!.assign (mkConst ``True.intro)
+      return #[]
+    return #[newGoal.mvarId!]
+  return #[goal]
 
 /--
 Dispatches the tactic based on the goal type.
+If the goal is a known relation, it rewrites both sides.
+Otherwise, it attempts to rewrite the goal itself as a proposition.
 -/
 def evalTargetV2 (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId) := do
   let ctx ← read
   let target ← instantiateMVars target
   if let some (r_goal, lhs, rhs) ← getRelInfo? ctx.relations target then
-    if let some relInfo := ctx.relations.find? r_goal then
-      let rhsrw ← grw r_goal rhs
-      let mut lhsrw := none
-      if relInfo.symm.isSome then
-        if let some res ← grw r_goal lhs then
-          lhsrw := some res
-      if rhsrw.isNone && lhsrw.isNone then
-         return #[goal]
-      let newLhs ← instantiateMVars (if let some l := lhsrw then l.expr' else lhs)
-      let newRhs ← instantiateMVars (if let some r := rhsrw then r.expr' else rhs)
-      trace[CatRw] m!"evalTargetV2: newLhs := {newLhs}, newRhs := {newRhs}"
-      let newTarget ← mkAppM r_goal #[newLhs, newRhs]
-      let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
-      let mut finalProof := newGoal
-      if let some r_res := rhsrw then
-        let symm := relInfo.symm.get!
-        let trans := relInfo.trans.get!
-        let isoR_symm ← mkAppM symm #[r_res.proof]
-        finalProof ← mkAppM trans #[finalProof, isoR_symm]
-      if let some l_res := lhsrw then
-        let trans := relInfo.trans.get!
-        finalProof ← mkAppM trans #[l_res.proof, finalProof]
-      let finalProofInst ← solveInstances finalProof
-      goal.assign (← instantiateMVars finalProofInst)
-      if ← withReducible (isDefEq newLhs newRhs) then
-         trace[CatRw] m!"evalTargetV2: newLhs and newRhs are defeq"
-         let reflProof ← mkAppM relInfo.refl #[newLhs]
-         if ← isDefEq (← inferType newGoal) (← inferType reflProof) then
-            newGoal.mvarId!.assign reflProof
-         return #[]
-      else
-         return #[newGoal.mvarId!]
-  let r_goal := ``Iff
-  if let some res ← grw r_goal target then
-     let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
-     let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
-     let proofInst ← solveInstances proof
-     goal.assign (← instantiateMVars proofInst)
-     if ← withReducible (isDefEq (← instantiateMVars res.expr') (mkConst ``True)) then
-        newGoal.mvarId!.assign (mkConst ``True.intro)
-        return #[]
-     return #[newGoal.mvarId!]
-  return #[goal]
+    evalRelationGoal goal r_goal lhs rhs
+  else
+    evalPropGoal goal target
 
+/-- Parses a user-provided rewrite rule. -/
 private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
   let raw ← Term.elabTerm stx[1]! none
   let rawType ← inferType raw
@@ -269,16 +304,18 @@ private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
     if stx[0]!.isNone then
       return { proof, rel, lhs, rhs }
     else
-      if let some relInfo := relations.find? rel then
-        if let some symm := relInfo.symm then
-          let symmProof ← mkAppM symm #[proof]
-          let lhsInst ← instantiateMVars lhs
-          let rhsInst ← instantiateMVars rhs
-          return { proof := symmProof, rel, lhs := rhsInst, rhs := lhsInst }
+      let relInfo := (relations.find? rel).get!
+      if let some symm := relInfo.symm then
+        let symmProof ← mkAppM symm #[proof]
+        let newLhs ← instantiateMVars rhs
+        let newRhs ← instantiateMVars lhs
+        return { proof := symmProof, rel, lhs := newLhs, rhs := newRhs }
       throwError "Relation {rel} is not symmetric"
   throwError "Rule must be a binary relation"
 
-def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) : TacticM Unit := withMainContext do
+/-- The main entry point for the `cat_rwv2` tactic. -/
+def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) :
+    TacticM Unit := withMainContext do
   let goal ← getMainGoal
   let rules ← match rulesStx with
     | `(rwRuleSeq| [$rules,*]) => rules.getElems.mapM parseRuleV2
@@ -298,6 +335,10 @@ def evalCatRwV2 (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) : TacticM Uni
     currentGoals := nextGoals
   replaceMainGoal currentGoals.toList
 
+/--
+`cat_rwv2 [rules]` performs generalized rewriting using registered relations.
+It propagates rewrites through expressions using congruence/lifting lemmas.
+-/
 elab "cat_rwv2 " rules:rwRuleSeq : tactic => evalCatRwV2 rules
 
 attribute [cat_rw_iso] congrArg

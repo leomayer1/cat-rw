@@ -13,7 +13,7 @@ variable {F G : C ⥤ D}
 variable (a a' b c b' : C)
 
 set_option linter.style.setOption false
-set_option trace.CatRw false
+set_option trace.CatRw true
 
 set_option warn.sorry false
 

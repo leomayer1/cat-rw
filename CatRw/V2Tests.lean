@@ -18,7 +18,7 @@ example (X Y Z : C) (h : X ≅ Y) : X ⨯ Z ≅ Y ⨯ Z := by
 
 /-- Goal rewrite. -/
 example (X Y : C) (h : X ≅ Y) (hz : IsZero X) : IsZero Y := by
-  show_term cat_rwv2 [h]
+  show_term cat_rwv2 [← h]
   exact hz
 
 /-- Equality rewrite (generalized). -/

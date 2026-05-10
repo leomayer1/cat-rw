@@ -30,7 +30,7 @@ def obj_iso {C D : Type*} [Category* C] [Category* D] (F : C ⥤ D) {x x' : C} (
 The goal is to make it work because obj_iso has been tagged. -/
 example {C D : Type*} [Category* C] [Category* D] (F : C ⥤ D) {x y z : C}
     (φ : x ≅ y) (ψ : y ≅ z) : F.obj x ≅ F.obj z := by
-  cat_rwv2 [φ, ψ]
+  cat_rw [φ, ψ]
 
 @[cat_rw_iso]
 def obj_iso' {C D : Type*} [Category* C] [Category* D] (F G : C ⥤ D) {x : C} (φ : F ≅ G) :
@@ -40,7 +40,7 @@ def obj_iso' {C D : Type*} [Category* C] [Category* D] (F G : C ⥤ D) {x : C} (
 applying natural isomorphisms. The goal is to make it work because obj_iso' has been tagged. -/
 example {C D E : Type*} [Category* C] [Category* D] [Category* E] (F F' : C ⥤ D) (G G' : D ⥤ E)
     {x : C} (φ : F ≅ F') (ψ : G ≅ G') : G.obj (F.obj x) ≅ G'.obj (F'.obj x) := by
-  cat_rwv2 [φ, ψ]
+  cat_rw [φ, ψ]
 
 @[cat_rw_iso]
 noncomputable
@@ -72,4 +72,4 @@ in both the LHS and the RHS
 -/
 
 example {C : Type*} [Category* C] (a b c : C) (f : a ≅ b) (g : c ≅ b) : a ≅ c := by
-  cat_rwv2 [g, ←f]
+  cat_rw [g, ←f]

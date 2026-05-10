@@ -1,7 +1,7 @@
 # GEMINI.md - Project Context
 
 ## Project Overview
-`cat-rw` is a Lean 4 project that implements a generalized category-theoretic rewrite tactic (`cat_rwv2`). This tactic allows users to perform rewrites using not only isomorphisms in category theory (`X ≅ Y`) but any registered binary relation (e.g., `=`, `↔`).
+`cat-rw` is a Lean 4 project that implements a generalized category-theoretic rewrite tactic (`cat_rw`). This tactic allows users to perform rewrites using not only isomorphisms in category theory (`X ≅ Y`) but any registered binary relation (e.g., `=`, `↔`).
 
 ### Key Features
 - **Generalized Rewriting**: Rewrites objects or goals using any registered relation.

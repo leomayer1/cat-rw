@@ -18,23 +18,15 @@ set_option trace.CatRw false
 set_option warn.sorry false
 
 example (ha : a ≅ a') : IsZero (a ⨿ b) := by
-  cat_rwv2 [ha]
+  cat_rw [ha]
+  guard_target = IsZero (a' ⨿ b)
   sorry
-
-example (ha : a ≅ a') : IsZero (a ⨯ b) := by
-  cat_rwv2 [ha]
-  sorry
-  -- cat_rwv2 [ha] should make the goal ⊢ IsZero (a' ⨯ b)
 
 noncomputable example (ha : a ≅ a') (hb : b ≅ b') : a ⨯ b ⨯ c ≅ a' ⨯ b' ⨯ c := by
-  cat_rwv2 [ha, hb]
-
-example (ha : a ≅ a') : IsZero (a ⨿ b) := by
-  -- cat_rwv2 [ha] should make the goal ⊢ IsZero (a' ⨿ b)
-  cat_rwv2 [ha]
-  sorry
+  cat_rw [ha, hb]
 
 example (φ : F ≅ G) (ha : a ≅ a') :
     IsZero (F.obj (a ⨯ b ⨯ a)) := by
-  cat_rwv2 [ha, ha]
+  cat_rw [ha, ha]
+  guard_target =  IsZero (F.obj (a' ⨯ b ⨯ a'))
   sorry

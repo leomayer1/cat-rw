@@ -11,21 +11,21 @@ variable {C : Type*} [Category C]
 variable {F G : J ⥤ C} (η : F ≅ G)
 
 example [HasLimit G] : HasLimit F := by
-  cat_rwv2 [η]
+  cat_rw [η]
 
 example [HasColimit G] : HasColimit F := by
-  cat_rwv2 [η]
+  cat_rw [η]
 
 variable {X Y : C} (e : X ≅ Y)
 
 example [Projective Y] : Projective X := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 example [Injective Y] : Injective X := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 example [HasZeroMorphisms C] (h : Simple Y) : Simple X := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 end GoalRewrites
 
@@ -35,10 +35,10 @@ variable {C : Type*} [Category C] [MonoidalCategory C]
 variable (A : C) {X Y : C} (e : X ≅ Y)
 
 example : A ⊗ X ≅ A ⊗ Y := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 example : X ⊗ A ≅ Y ⊗ A := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 end Monoidal
 
@@ -56,7 +56,7 @@ variable {C D : Type*} [Category C] [Category D]
 variable {X Y : C} {S T : D} (e : X ≅ Y) (f : S ≅ T)
 
 example : (X, S) ≅ (Y, T) := by
-  cat_rwv2 [e, f]
+  cat_rw [e, f]
 
 end ProductCategory
 
@@ -67,9 +67,9 @@ variable {L : A ⥤ T} {R : B ⥤ T}
 variable {X Y : Comma L R} (e : X ≅ Y)
 
 example : X.left ≅ Y.left := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 example : X.right ≅ Y.right := by
-  cat_rwv2 [e]
+  cat_rw [e]
 
 end Comma

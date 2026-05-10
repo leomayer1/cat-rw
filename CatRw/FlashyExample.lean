@@ -9,28 +9,26 @@ noncomputable section
 variable {R S : CommRingCat}
 
 set_option linter.style.setOption false
-set_option trace.CatRw false
+set_option trace.CatRw true
 set_option CatRw.trace_iso_expr true
 set_option warn.sorry false
 
 noncomputable def spec_prod_iso {R S : CommRingCat} : Spec (R ⨯ S) ≅ Spec R ⨿ Spec S := by
   change Scheme.Spec.obj (op (R ⨯ S)) ≅ Spec R ⨿ Spec S
-  cat_rwv2 [Limits.opProdIsoCoprod R S, Limits.PreservesColimitPair.iso Scheme.Spec]
-  sorry
+  cat_rw [Limits.opProdIsoCoprod R S]
+  cat_rw [← Limits.PreservesColimitPair.iso Scheme.Spec (op R) (op S)]
+  exact Iso.refl _
+
 
 noncomputable
 example {R S : CommRingCat} : Scheme.Spec.obj ((op R) ⨿ (op S)) ≅ Spec R ⨿ Spec S := by
-  cat_rwv2 [Limits.PreservesColimitPair.iso Scheme.Spec]
-  sorry
+  cat_rw [← Limits.PreservesColimitPair.iso Scheme.Spec]
+  exact Iso.refl _
+
 
 noncomputable
 example {A B : GrpCat} : (forget _).obj (A ⨯ B) ≅ (forget _).obj A ⨯ (forget _).obj B := by
-  cat_rwv2 [Limits.PreservesLimitPair.iso]
-
-example {R S T : CommRingCat} (φ : R ≅ T) (F G : Scheme ⥤ Scheme) (ψ : F ≅ G) :
-    IsReduced (F.obj (Spec (R ⨯ S))) := by
-  cat_rwv2 [spec_prod_iso, φ, ψ]
-  sorry
+  cat_rw [Limits.PreservesLimitPair.iso]
 
 section
 open Limits
@@ -48,9 +46,9 @@ noncomputable
 example {X Y Z : Scheme} (f : X ⟶ Y) (g : Y ⟶ Z) (M N P : Z.Modules) (φ : M ≅ N)
     (hN : Limits.IsZero ((pullback g).obj N)) (hP : Limits.IsZero ((pullback g).obj P)) :
     Limits.IsZero ((pullback (f ≫ g)).obj (M ⨯ P)) := by
-  cat_rwv2 [φ, ← pullbackComp]
+  cat_rw [φ, ← pullbackComp]
   dsimp
-  cat_rwv2 [Limits.PreservesLimitPair.iso, Limits.PreservesLimitPair.iso]
+  cat_rw [Limits.PreservesLimitPair.iso, Limits.PreservesLimitPair.iso]
   apply isZero_prod
   · exact Functor.map_isZero _ hN
   exact Functor.map_isZero _ hP

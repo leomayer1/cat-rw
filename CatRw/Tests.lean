@@ -17,7 +17,7 @@ variable (a a' b b' c : C)
   Very basic tests
 -/
 example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
-  cat_rwv2 [h, h']
+  cat_rw [h, h']
 
 
 /- An example of what we would want cat-rw to be able to solve -/
@@ -39,9 +39,8 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
 
 noncomputable
 example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
-  cat_rwv2 [←ha, ←hb, prod.braiding a b, prod.associator, prod.braiding a c]
-  sorry
+  cat_rw [← ha, ← hb, prod.braiding a b, prod.associator, prod.braiding a c, prod.associator]
 
 example (ha : a ≅ a') (hF : F ≅ G) (hH : H ≅ K) (h₂ : G.obj a' ≅ G.obj b) :
     K.obj (G.obj a) ≅ H.obj (F.obj b) := by
-  cat_rwv2 [ha, h₂, hF, hH]
+  cat_rw [ha, h₂, hF, hH]

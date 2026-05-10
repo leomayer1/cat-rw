@@ -7,6 +7,8 @@ import Mathlib.CategoryTheory.Equivalence
 
 open CategoryTheory Limits
 
+set_option trace.CatRw true
+
 variable {C : Type*} [Category* C] [HasProducts C]
 variable {D : Type*} [Category* D] [HasProducts D]
 variable {E : Type*} [Category* E]

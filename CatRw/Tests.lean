@@ -16,6 +16,9 @@ variable (a a' b b' c : C)
 example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
   cat_rw [h, h']
 
+example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
+  cat_rw? [h, h']
+
 
 /- An example of what we would want cat-rw to be able to solve -/
 noncomputable

@@ -338,7 +338,7 @@ private def rewriteManyRaw (rules : Array Rule) (lhs : Expr) :
   return ⟨{ newExpr := current, iso := iso.getD (← mkReflIso lhs) }, errs⟩
 
 private def rethrowFirst (arr : Array <| Option <| (Rule × Expr)) : TacticM Unit := do
-  for err in arr.reverse do
+  for err in arr do
     if let some (rule, current) := err then
       throwError
           "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
@@ -458,8 +458,8 @@ private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : 
   let resultLhs ← rewriteManyRaw rules lhs
   let resultRhs ← rewriteManyRaw rules rhs
   -- Check for consistency: a rule must apply to at least one side.
-  -- We traverse the error lists (which match the sequence of rules) in reverse.
-  for (errL, errR) in resultLhs.snd.zip resultRhs.snd |>.reverse do
+  -- We traverse the error lists (which match the sequence of rules).
+  for (errL, errR) in resultLhs.snd.zip resultRhs.snd do
     if let (some (rule, currentL), some (_, currentR)) := (errL, errR) then
       throwError
         "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\

@@ -289,7 +289,7 @@ end
 
 /-- Performs a rewrite on both sides of a relation. -/
 private def rewriteTarget (r : Name) (lhs rhs : Expr) :
-    CatRwM2 (Expr × Expr × Option Expr × Option Expr) := do
+    CatRwM2 (Expr × Expr × Option Expr × Option Expr × Bool) := do
   let ctx ← read
   let relInfo := (ctx.relations.find? r).get!
   let mut lhsrw := none
@@ -299,19 +299,20 @@ private def rewriteTarget (r : Name) (lhs rhs : Expr) :
   let rhsrw ← grw r rhs
   let newLhs := if let some l := lhsrw then l.expr' else lhs
   let newRhs := if let some r := rhsrw then r.expr' else rhs
-  return (newLhs, newRhs, lhsrw.map (·.proof), rhsrw.map (·.proof))
+  let rewrote := lhsrw.isSome || rhsrw.isSome
+  return (newLhs, newRhs, lhsrw.map (·.proof), rhsrw.map (·.proof), rewrote)
 
 /-- Dispatches the rewrite based on whether it's the goal or a hypothesis. -/
 def evalRewrite (goal : MVarId) (fvarId? : Option FVarId) :
-    CatRwM2 (Array MVarId × Option FVarId) := do
+    CatRwM2 (Array MVarId × Option FVarId × Bool) := do
   let ctx ← read
   let target ← if let some fvarId := fvarId? then fvarId.getType else goal.getType
   let target ← instantiateMVars target
   traceM m!"evalRewrite at {fvarId?.map mkFVar |>.getD (mkConst ``none)}: {target}"
   if let some (r, lhs, rhs) ← getRelInfo? ctx.relations target then
     let relInfo := ctx.relations.find? r |>.get!
-    let (newLhs, newRhs, lp?, rp?) ← rewriteTarget r lhs rhs
-    if lp?.isNone && rp?.isNone then return (#[goal], fvarId?)
+    let (newLhs, newRhs, lp?, rp?, rewrote) ← rewriteTarget r lhs rhs
+    if !rewrote then return (#[goal], fvarId?, false)
     if let some fvarId := fvarId? then
       -- Hypothesis case: h : lhs ≅ rhs
       -- We replace it with: lp.symm ≫ h ≫ rp : newLhs ≅ newRhs
@@ -322,7 +323,7 @@ def evalRewrite (goal : MVarId) (fvarId? : Option FVarId) :
         proof ← relInfo.applyTrans lp_symm proof
       let newTarget ← mkAppM r #[newLhs, newRhs]
       let res ← goal.replace fvarId proof newTarget
-      return (#[res.mvarId], some res.fvarId)
+      return (#[res.mvarId], some res.fvarId, true)
     else
       -- Goal case: ⊢ lhs ≅ rhs
       -- We replace it with: ⊢ newLhs ≅ newRhs
@@ -334,7 +335,7 @@ def evalRewrite (goal : MVarId) (fvarId? : Option FVarId) :
           let rp_symm ← relInfo.applySymm rp
           proof ← relInfo.applyTrans proof rp_symm
         goal.assign (← solveInstances proof)
-        return (#[], none)
+        return (#[], none, true)
       else
         let newTarget ← mkAppM r #[newLhs, newRhs]
         let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
@@ -345,29 +346,29 @@ def evalRewrite (goal : MVarId) (fvarId? : Option FVarId) :
         if let some lp := lp? then
           proof ← relInfo.applyTrans lp proof
         goal.assign (← solveInstances proof)
-        return (#[newGoal.mvarId!], none)
+        return (#[newGoal.mvarId!], none, true)
   else
     -- Prop case: Goal ⊢ P or Hyp h : P. We use Iff to transform.
     let r_iff := ``Iff
     let relInfo := ctx.relations.find? r_iff |>.get!
     if let some res ← grw r_iff target then
-      if ← relInfo.isRefl res.proof then return (#[goal], fvarId?)
+      if ← relInfo.isRefl res.proof then return (#[goal], fvarId?, false)
       if let some fvarId := fvarId? then
         -- Hyp case: h : P, res.proof : P ↔ Q. New hyp: res.proof.mp h : Q
         let newProof ← mkAppM ``Iff.mp #[res.proof, mkFVar fvarId]
         let res ← goal.replace fvarId newProof res.expr'
-        return (#[res.mvarId], some res.fvarId)
+        return (#[res.mvarId], some res.fvarId, true)
       else
         -- Goal case: ⊢ P, res.proof : P ↔ Q. New goal: ⊢ Q
         if ← withReducible (isDefEq (← instantiateMVars res.expr') (mkConst ``True)) then
           let proof ← mkAppM ``Iff.mpr #[res.proof, mkConst ``True.intro]
           goal.assign (← solveInstances proof)
-          return (#[], none)
+          return (#[], none, true)
         let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
         let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
         goal.assign (← solveInstances proof)
-        return (#[newGoal.mvarId!], none)
-    return (#[goal], fvarId?)
+        return (#[newGoal.mvarId!], none, true)
+    return (#[goal], fvarId?, false)
 
 /-- Parses a user-provided rewrite rule. -/
 private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do
@@ -416,20 +417,21 @@ def evalCatRwV2 (stx : Syntax) (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq
           withMainContext do
             if (← getGoals).isEmpty then
               throwError "all goals have already been solved"
+            let anyRewroteRef ← IO.mkRef false
+            let rewrite (fvarId? : Option FVarId) : TacticM Unit := do
+              let goal ← getMainGoal
+              occCountRef.set {}
+              let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
+              let (gs, _, rewrote) ← liftMetaM <| ReaderT.run (evalRewrite goal fvarId?) ctx
+              replaceMainGoal gs.toList
+              if rewrote then anyRewroteRef.set true
             withLocation loc
-              (fun fvarId => do
-                let goal ← getMainGoal
-                occCountRef.set {}
-                let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
-                let (gs, _) ← liftMetaM <| ReaderT.run (evalRewrite goal (some fvarId)) ctx
-                replaceMainGoal gs.toList)
-              (do
-                let goal ← getMainGoal
-                occCountRef.set {}
-                let ctx := { rule, isoMakerLemmas, relations, config, occCountRef }
-                let (gs, _) ← liftMetaM <| ReaderT.run (evalRewrite goal none) ctx
-                replaceMainGoal gs.toList)
+              (fun fvarId => rewrite (some fvarId))
+              (rewrite none)
               (fun _ => throwError "failed to rewrite")
+            if !(← anyRewroteRef.get) then
+              throwTacticEx `cat_rw (← getMainGoal)
+                m!"tactic 'cat_rw' failed, rule {rule.lhs} -> {rule.rhs} did not match any location"
   if CatRw.trace_iso_expr.get <| ← getOptions then
     if let some originalGoal := originalGoal? then
       let val ← liftMetaM <| instantiateMVars (mkMVar originalGoal)

@@ -7,7 +7,6 @@ import CatRw.Examples
 import CatRw.FlashyExample
 import CatRw.General
 import CatRw.IsZero
-import CatRw.NewFeaturesTests
 import CatRw.Tag
 import CatRw.TagTests
 import CatRw.Tests

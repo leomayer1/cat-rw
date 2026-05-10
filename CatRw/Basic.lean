@@ -482,4 +482,4 @@ elab "cat_rw " rules:rwRuleSeq : tactic => CatRw.evalCatRw rules
 `cat_rw? [rules]` runs `cat_rw [rules]` under `show_term`, printing the generated proof term.
 -/
 macro "cat_rw? " rules:rwRuleSeq : tactic =>
-  `(tactic| show_term { cat_rw $rules })
+  `(tactic| show_term cat_rw $rules )

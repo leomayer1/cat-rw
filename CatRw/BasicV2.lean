@@ -152,6 +152,30 @@ private def tryMatchRule (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote)
       return some { expr' := rhs, proof }
   return none
 
+/-- Helper to check if an expression is a reflexivity application for a given relation. -/
+private def isReflProof (relInfo : RelInfo) (p : Expr) : MetaM Bool := do
+  let p ← instantiateMVars p
+  return p.isAppOf relInfo.refl
+
+/-- Helper to apply symmetry, simplifying `symm (symm p) -> p` and `symm refl -> refl`. -/
+private def mkSymm (relInfo : RelInfo) (p : Expr) : MetaM Expr := do
+  let some symmName := relInfo.symm | return p
+  let p ← instantiateMVars p
+  if p.isAppOf symmName then
+    return p.appArg!
+  if ← isReflProof relInfo p then
+    return p
+  mkAppM symmName #[p]
+
+/-- Helper to apply transitivity, simplifying `refl ≪≫ p -> p` and `p ≪≫ refl -> p`. -/
+private def mkTrans (relInfo : RelInfo) (p1 p2 : Expr) : MetaM Expr := do
+  let some transName := relInfo.trans | throwError "Relation {relInfo.name} is not transitive"
+  let p1 ← instantiateMVars p1
+  let p2 ← instantiateMVars p2
+  if ← isReflProof relInfo p1 then return p2
+  if ← isReflProof relInfo p2 then return p1
+  mkAppM transName #[p1, p2]
+
 mutual
 /--
 The generalized rewrite function.
@@ -199,7 +223,7 @@ private partial def tryApplyLemma (lemmaName : Name) (r_out : Name) (expr : Expr
       let mut proof ← mkAppOptM lemmaName optArgs
       let rhsFinal := if matchedLhs then rhs else lhs
       if matchedRhs then
-        proof ← mkAppM relInfo.get!.symm.get! #[proof]
+        proof ← mkSymm relInfo.get! proof
       let rhsInst ← instantiateMVars (← solveInstances rhsFinal)
       let proofInst ← instantiateMVars proof
       trace[CatRw] m!"applied {lemmaName}: {expr} -> {rhsInst}"
@@ -219,9 +243,9 @@ private partial def processArg (arg : Expr) : CatRwM2 Bool := do
       return true
   -- Try rewriting RHS if relation is symmetric
   if let some relInfoArg := ctx.relations.find? r_arg then
-    if let some symmName := relInfoArg.symm then
+    if let some _ := relInfoArg.symm then
       if let some res ← withReader (fun _ => nextCtx) (grw r_arg argRhs) then
-        let proof ← mkAppM symmName #[res.proof]
+        let proof ← mkSymm relInfoArg res.proof
         if ← isDefEq argType (← inferType proof) then
           arg.mvarId!.assign proof
           return true
@@ -247,28 +271,42 @@ private def evalRelationGoal (goal : MVarId) (r_goal : Name) (lhs rhs : Expr) :
   let newLhs ← instantiateMVars (if let some l := lhsrw then l.expr' else lhs)
   let newRhs ← instantiateMVars (if let some r := rhsrw then r.expr' else rhs)
   trace[CatRw] m!"new goal sides: {newLhs}, {newRhs}"
-  let newTarget ← mkAppM r_goal #[newLhs, newRhs]
-  let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
-  -- Assemble the final proof: lhs_proof . new_goal . rhs_proof.symm
-  let mut finalProof := newGoal
-  if let some r_res := rhsrw then
-    let isoR_symm ← mkAppM relInfo.symm.get! #[r_res.proof]
-    finalProof ← mkAppM relInfo.trans.get! #[finalProof, isoR_symm]
-  if let some l_res := lhsrw then
-    finalProof ← mkAppM relInfo.trans.get! #[l_res.proof, finalProof]
-  goal.assign (← solveInstances finalProof)
-  -- Check if result is defeq
   if ← withReducible (isDefEq newLhs newRhs) then
-    let reflProof ← mkAppM relInfo.refl #[newLhs]
-    if ← isDefEq (← inferType newGoal) (← inferType reflProof) then
-      newGoal.mvarId!.assign reflProof
+    let mut finalProof : Option Expr := none
+    if let some l_res := lhsrw then
+      finalProof := some l_res.proof
+    if let some r_res := rhsrw then
+      let isoR_symm ← mkSymm relInfo r_res.proof
+      if let some p := finalProof then
+        finalProof := some (← mkTrans relInfo p isoR_symm)
+      else
+        finalProof := some isoR_symm
+    if let some p := finalProof then
+      goal.assign (← solveInstances p)
       return #[]
-  return #[newGoal.mvarId!]
+    else
+      return #[goal]
+  else
+    let newTarget ← mkAppM r_goal #[newLhs, newRhs]
+    let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
+    -- Assemble the final proof: lhs_proof . new_goal . rhs_proof.symm
+    let mut finalProof : Expr := newGoal
+    if let some r_res := rhsrw then
+      let isoR_symm ← mkSymm relInfo r_res.proof
+      finalProof ← mkTrans relInfo finalProof isoR_symm
+    if let some l_res := lhsrw then
+      finalProof ← mkTrans relInfo l_res.proof finalProof
+    goal.assign (← solveInstances finalProof)
+    return #[newGoal.mvarId!]
 
 /-- Handles goals that are predicates (using `Iff` to transform them). -/
 private def evalPropGoal (goal : MVarId) (target : Expr) : CatRwM2 (Array MVarId) := do
   let r_goal := ``Iff
+  let ctx ← read
   if let some res ← grw r_goal target then
+    let relInfo := (ctx.relations.find? r_goal).get!
+    if ← isReflProof relInfo res.proof then
+      return #[goal]
     let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
     let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
     goal.assign (← solveInstances proof)

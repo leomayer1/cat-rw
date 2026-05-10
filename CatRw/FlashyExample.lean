@@ -43,8 +43,7 @@ example {X Y Z : Scheme} (f : X ⟶ Y) (g : Y ⟶ Z) (M N P : Z.Modules) (φ : M
     Limits.IsZero ((pullback (f ≫ g)).obj (M ⨯ P)) := by
   cat_rw [φ, ← pullbackComp]
   dsimp
-  cat_rw [Limits.PreservesLimitPair.iso .., Limits.PreservesLimitPair.iso ..]
+  cat_rw [Limits.PreservesLimitPair.iso, Limits.PreservesLimitPair.iso]
   apply isZero_prod
   · exact Functor.map_isZero _ hN
   exact Functor.map_isZero _ hP
-

@@ -5,6 +5,8 @@ open AlgebraicGeometry CategoryTheory
 
 variable {X Y : Scheme} (φ : X ≅ Y) {C : Type*} [Category* C]
 
+set_option trace.CatRw true
+
 include φ
 
 @[cat_rw]
@@ -32,7 +34,6 @@ def TopCat.sheafToPresheaf_iso {X : TopCat} {F G : Sheaf C X} (φ : F ≅ G) :
 
 example {X : TopCat} {F G : TopCat.Sheaf C X} (φ : F ≅ G) : Limits.IsZero F.obj := by
   cat_rw [φ]
-
   sorry
 
 #check X ⨯ Y

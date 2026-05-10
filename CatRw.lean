@@ -1,8 +1,10 @@
 import CatRw.Attr
 import CatRw.Basic
+import CatRw.ComprehensiveTests
 import CatRw.CoprodTest
 import CatRw.DebugCoprod
+import CatRw.FlashyExample
 import CatRw.IsZero
-import CatRw.Tactic
 import CatRw.Tag
+import CatRw.TagTests
 import CatRw.Tests

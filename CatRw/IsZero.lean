@@ -1,9 +1,11 @@
 import Mathlib
-import CatRw.Tactic
+import CatRw.Basic
 
 open CategoryTheory Limits AlgebraicGeometry
 
 variable {C : Type*} [Category* C] (X Y : C) (φ : X ≅ Y) {D : Type*} [Category* D] (F : C ⥤ D)
+
+set_option trace.CatRw true
 
 example (h : IsZero Y) : IsZero X := by
     cat_rw [φ]

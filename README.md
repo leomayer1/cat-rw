@@ -21,8 +21,8 @@ example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
 The tactic also accepts reversed rules:
 
 ```lean
-example (h : a ≅ b) : b ≅ a := by
-  cat_rw [← h]
+example (φ : a ≅ b) : b ≅ a := by
+  cat_rw [← φ]
 ```
 
 ## Capabilities
@@ -35,14 +35,11 @@ comma projections, and monoidal tensoring.
 For example:
 
 ```lean
-variable {D E : Type*} [Category* D] [Category* E]
-variable {F G : C ⥤ D} {H K : D ⥤ E}
-variable (a a' b : C)
+variable {C : Type*} [Category* C] [HasProducts C]
+variable (a b c : C)
 
-example (ha : a ≅ a') (hF : F ≅ G) (hH : H ≅ K)
-    (h₂ : G.obj a' ≅ G.obj b) :
-    K.obj (G.obj a) ≅ H.obj (F.obj b) := by
-  cat_rw [ha, h₂, hF, hH]
+noncomputable example (φ : a ≅ b) : a ⨯ c ≅ c ⨯ b := by
+  cat_rw [φ, prod.braiding b c]
 ```
 
 `cat_rw` can also rewrite proposition goals using registered iff lemmas, such as
@@ -50,8 +47,8 @@ example (ha : a ≅ a') (hF : F ≅ G) (hH : H ≅ K)
 objects, injective objects, and simple objects.
 
 ```lean
-example {X Y : C} (e : X ≅ Y) (h : IsZero Y) : IsZero X := by
-  cat_rw [e]
+example {X Y : C} (φ : X ≅ Y) (h : IsZero Y) : IsZero X := by
+  cat_rw [φ]
   exact h
 ```
 

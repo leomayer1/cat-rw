@@ -123,6 +123,7 @@ private def tryWhole (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := 
   try
     let sameType ← isDefEq (← inferType e) (← inferType rule.src)
     if sameType && (← isDefEq e rule.src) then
+      trace[CatRw] m!"tryWhole: matched {rule.src} -> {rule.dst}"
       return some { newExpr := ← instantiateMVars rule.dst, iso := ← instantiateMVars rule.iso }
     else
       restoreState state
@@ -174,6 +175,7 @@ private def tryIsoMakerLemma
     let (src, dst) ← isoEndpoints iso
     let endpointState ← saveState
     if ← withReducibleAndInstances <| isDefEq src e then
+      trace[CatRw] m!"tryIsoMaker: successfully applied {lemmaName}"
       return some {
         newExpr := ← instantiateMVars dst
         iso := ← instantiateMVars iso
@@ -181,6 +183,7 @@ private def tryIsoMakerLemma
     else
       restoreState endpointState
       if ← withReducibleAndInstances <| isDefEq dst e then
+        trace[CatRw] m!"tryIsoMaker: successfully applied {lemmaName} (symmetric)"
         return some {
           newExpr := ← instantiateMVars src
           iso := ← mkAppM ``CategoryTheory.Iso.symm #[← instantiateMVars iso]
@@ -189,7 +192,8 @@ private def tryIsoMakerLemma
         restoreState state
         return none
   catch err =>
-    trace[CatRw] m!"tryIsoMaker {lemmaName} failed on {e}: {err.toMessageData}"
+    trace[CatRw]
+      m!"tryIsoMaker {lemmaName} failed on {e}: {err.toMessageData}"
     restoreState state
     return none
 
@@ -203,30 +207,35 @@ private def tryIsoMakerLemmas (e : Expr) (result : RewriteResult) :
 /--
 Recursively attempts to apply a rewrite rule to an expression `e`.
 It checks:
-1. The expression itself.
+1. The expression itself (via `tryWhole`).
 2. If it's a functor application `F.obj X`, it tries to rewrite `F` or `X`.
-3. If a tagged `@[cat_rw_iso]` lemma can lift an iso through the expression.
+3. If a tagged `@[cat_rw_iso]` lemma can lift an iso through the expression
+   (via `tryIsoMakerLemmas`).
 4. If it's a binary product `X ⨯ Y`, it tries to rewrite `X` or `Y`.
 5. If it's a binary coproduct `X ⨿ Y`, it tries to rewrite `X` or `Y`.
 -/
 private partial def rewriteOnce
     (rule : Rule) (e : Expr) : MetaM (Option RewriteResult) := do
-  trace[CatRw] m!"rewrite rule ({rule.src} -> {rule.dst}) on {e}"
+  trace[CatRw]
+    m!"rewriteOnce: rule ({rule.src} -> {rule.dst}) on {e}"
   if let some result ← tryWhole rule e then
     return some result
   let args := e.getAppArgs
   /-
     Check if `e` is an application of `CategoryTheory.Functor.obj`.
+    Currently hardcoded for efficiency and to handle both functor and object rewrites.
   -/
   if e.isAppOfArity ``CategoryTheory.Functor.obj 6 then
     let F := args[4]! -- F : C ⥤ D
     let X := args[5]! -- X : C
+    -- Try rewriting the functor F itself.
     if let some result ← tryWhole rule F then
       trace[CatRw] m!"Functor.app {result.iso} {X}"
       return some {
         newExpr := ← mkFunctorObj result.newExpr X
         iso := ← mkAppM ``CategoryTheory.Iso.app #[result.iso, X]
       }
+    -- Try recursively rewriting the object X.
     if let some result ← rewriteOnce rule X then
       trace[CatRw] m!"Functor.mapIso {F} {result.iso}"
       return some {
@@ -240,6 +249,7 @@ private partial def rewriteOnce
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     let sourceInst := args[4]!
+    -- Try rewriting the left component X.
     if let some result ← rewriteOnce rule X then
       trace[CatRw] m!"prod.mapIso {result.iso} rfl({Y})"
       let targetInst ← getProdInst result.newExpr Y
@@ -250,6 +260,7 @@ private partial def rewriteOnce
           #[none, none, some X, some Y, some result.newExpr, some Y,
             some sourceInst, some targetInst, some result.iso, some reflY]
       }
+    -- Try rewriting the right component Y.
     if let some result ← rewriteOnce rule Y then
       trace[CatRw] m!"prod.mapIso rfl({X}) {result.iso}"
       let targetInst ← getProdInst X result.newExpr
@@ -267,6 +278,7 @@ private partial def rewriteOnce
     let X := args[2]! -- X : C
     let Y := args[3]! -- Y : C
     let sourceInst := args[4]!
+    -- Try rewriting the left component X.
     if let some result ← rewriteOnce rule X then
       trace[CatRw] m!"coprod.mapIso {result.iso} rfl({Y})"
       let targetInst ← getCoprodInst result.newExpr Y
@@ -277,6 +289,7 @@ private partial def rewriteOnce
           #[none, none, some X, some Y, some result.newExpr, some Y,
             some sourceInst, some targetInst, some result.iso, some reflY]
       }
+    -- Try rewriting the right component Y.
     if let some result ← rewriteOnce rule Y then
       trace[CatRw] m!"coprod.mapIso rfl({X}) {result.iso}"
       let targetInst ← getCoprodInst X result.newExpr
@@ -287,6 +300,10 @@ private partial def rewriteOnce
           #[none, none, some X, some Y, some X, some result.newExpr,
             some sourceInst, some targetInst, some reflX, some result.iso]
       }
+  /-
+    General case: if not a special application, try to recursively rewrite
+    the last argument and then use tagged `@[cat_rw_iso]` lemmas to lift it.
+  -/
   if !(e.isAppOfArity ``CategoryTheory.Functor.obj 6) &&
       !(e.isAppOfArity ``CategoryTheory.Limits.prod 5) &&
       !(e.isAppOfArity ``CategoryTheory.Limits.coprod 5) then
@@ -299,14 +316,17 @@ private partial def rewriteOnce
         restoreState state
       catch err =>
         trace[CatRw]
-          m!"tagged iso-maker search failed for argument {arg} of {e}: {err.toMessageData}"
+          m!"tagged iso-maker search failed for argument {arg} of {e}: \
+          {err.toMessageData}"
         restoreState state
-  trace[CatRw] m!"rwOnce return none"
+  trace[CatRw] m!"rewriteOnce: no rewrite found for {e}"
   return none
 
 /--
-Applies a sequence of rules to the left-hand side of an isomorphism.
-Transitions from `lhs` to a new expression by composing the isomorphisms.
+Applies a sequence of rules to the left-hand side of an isomorphism goal.
+It returns the final expression, the accumulated isomorphism, and an array
+indicating for each rule whether it could be applied to the current expression.
+This error array is used for bidirectional rewriting in `evalIsoGoal`.
 -/
 private def rewriteManyRaw (rules : Array Rule) (lhs : Expr) :
     TacticM (RewriteResult × (Array <| Option <| Rule × Expr)) := do
@@ -323,22 +343,9 @@ private def rewriteManyRaw (rules : Array Rule) (lhs : Expr) :
       errs := errs.push none
     else
       errs := errs.push <| some ⟨rule, current⟩
-  trace[CatRw] m!"iso = {iso}"
-  return ⟨{ newExpr := current, iso := iso.getD (← mkReflIso lhs) }, errs⟩
-
-private def rethrowFirst (arr : Array <| Option <| (Rule × Expr)) : TacticM Unit := do
-  for err in arr do
-    if let some (rule, current) := err then
-      throwError
-          "cat_rw could not apply an isomorphism with source{indentExpr rule.src}\n\
-          to{indentExpr current}"
-  return ()
-
-private def rewriteMany (rules : Array Rule) (lhs : Expr) :
-    TacticM RewriteResult := do
-  let result ← rewriteManyRaw rules lhs
-  rethrowFirst result.snd
-  return result.fst
+  let finalIso := iso.getD (← mkReflIso lhs)
+  trace[CatRw] m!"rewriteManyRaw: finished with newExpr = {current}, iso = {finalIso}"
+  return ⟨{ newExpr := current, iso := finalIso }, errs⟩
 
 /--
 Attempts to apply a specific `iso_iff` lemma to the `target` goal in a top-down fashion.
@@ -346,7 +353,8 @@ It unifies the target with one side of the `Iff` and then tries to rewrite the "
 of the isomorphism argument.
 -/
 private def tryIsoIffLemmaTopDown
-    (target : Expr) (rules : Array Rule) (lemmaName : Name) : TacticM (Option IffRewriteResult) := do
+    (target : Expr) (rules : Array Rule) (lemmaName : Name) :
+    TacticM (Option IffRewriteResult) := do
   let state ← saveState
   try
     let info ← getConstInfo lemmaName
@@ -357,7 +365,8 @@ private def tryIsoIffLemmaTopDown
     let resultType ← whnf resultType
     let res ← match_expr resultType with
     | Iff lhs rhs =>
-        let trySide (goalSide targetSide : Expr) (mkP : Expr → Expr → MetaM Expr) : TacticM (Option IffRewriteResult) := do
+        let trySide (goalSide targetSide : Expr) (mkP : Expr → Expr → MetaM Expr) :
+            TacticM (Option IffRewriteResult) := do
           let sideState ← saveState
           let goalSide ← instantiateMVars goalSide
           if ← isDefEq goalSide target then
@@ -370,6 +379,7 @@ private def tryIsoIffLemmaTopDown
                   let X ← instantiateMVars X
                   trace[CatRw] m!"attempting to rewrite subject {X}"
                   let resultMany ← rewriteManyRaw rules X
+                  -- For top-down, we currently require ALL rules to apply to the subject.
                   if resultMany.snd.all Option.isNone then
                     trace[CatRw] m!"subject rewritten to {resultMany.fst.newExpr}"
                     if ← isDefEq arg resultMany.fst.iso then
@@ -382,7 +392,8 @@ private def tryIsoIffLemmaTopDown
                       })
                     else pure none
                   else
-                    trace[CatRw] m!"failed to rewrite subject {X}"
+                    trace[CatRw]
+                      m!"failed to rewrite subject {X} with all provided rules"
                     pure none
               | _ => pure none
               if let some r := resInner then return some r
@@ -391,15 +402,22 @@ private def tryIsoIffLemmaTopDown
           else
             restoreState sideState
             return none
-        if let some resSide ← trySide lhs rhs (fun iff np => mkAppM ``Iff.mpr #[iff, np]) then pure (some resSide)
-        else if let some resSide ← trySide rhs lhs (fun iff np => mkAppM ``Iff.mp #[iff, np]) then pure (some resSide)
+        if let some resSide ←
+            trySide lhs rhs (fun iff np => mkAppM ``Iff.mpr #[iff, np]) then
+          pure (some resSide)
+        else if let some resSide ←
+            trySide rhs lhs (fun iff np => mkAppM ``Iff.mp #[iff, np]) then
+          pure (some resSide)
         else pure none
-    | _ => pure none
+    | _ =>
+      trace[CatRw] m!"{lemmaName} resultType is not an Iff"
+      pure none
     if let some r := res then return some r
     restoreState state
     return none
   catch e =>
-    trace[CatRw] m!"tryIsoIffTopDown {lemmaName} failed with error: {e.toMessageData}"
+    trace[CatRw]
+      m!"tryIsoIffTopDown {lemmaName} failed with error: {e.toMessageData}"
     restoreState state
     return none
 
@@ -407,7 +425,8 @@ private def tryIsoIffLemmaTopDown
 Iterates through all registered `iso_iff` lemmas to see if any can be used to
 rewrite the current `target` in a top-down fashion.
 -/
-private def tryIsoIffLemmasTopDown (target : Expr) (rules : Array Rule) : TacticM (Option IffRewriteResult) := do
+private def tryIsoIffLemmasTopDown (target : Expr) (rules : Array Rule) :
+    TacticM (Option IffRewriteResult) := do
   for lemmaName in ← getIsoIffLemmas do
     if let some result ← tryIsoIffLemmaTopDown target rules lemmaName then
       return some result
@@ -417,11 +436,14 @@ private def tryIsoIffLemmasTopDown (target : Expr) (rules : Array Rule) : Tactic
 Recursively attempts to rewrite a proposition `e` using `iso_iff` lemmas.
 Handles logical connectives and applies top-down isomorphism matching.
 -/
-private partial def rewriteProp (rules : Array Rule) (e : Expr) : TacticM (Option PropRewriteResult) := do
+private partial def rewriteProp (rules : Array Rule) (e : Expr) :
+    TacticM (Option PropRewriteResult) := do
+  -- Try top-level matching first.
   if (← tryIsoIffLemmasTopDown e rules).isSome then
-    -- For now, we only support top-level evalIffGoal which uses tryIsoIffLemmasTopDown directly.
+    -- If it's a top-level match, evalIffGoal handles it.
+    -- To support recursion properly, we would need the Iff expression.
     return none
-  -- Recurse into logical connectives
+  -- Recurse into logical connectives (currently only And is supported).
   let result ← match_expr e with
     | And P Q =>
       if let some resP ← rewriteProp rules P then
@@ -446,10 +468,11 @@ Bidirectional rewriting is supported: rules that cannot be applied to the LHS
 are tried on the RHS. The two rewrites are then joined in the middle.
 -/
 private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : TacticM Unit := do
+  trace[CatRw] m!"evalIsoGoal: rewriting {lhs} ≅ {rhs}"
   -- Rewrite the left-hand side and right-hand side independently.
   let resultLhs ← rewriteManyRaw rules lhs
   let resultRhs ← rewriteManyRaw rules rhs
-  -- Check for consistency: a rule must apply to at least one side.
+  -- Check for consistency: every rule must apply to at least one side.
   -- We traverse the error lists (which match the sequence of rules).
   for (errL, errR) in resultLhs.snd.zip resultRhs.snd do
     if let (some (rule, currentL), some (_, currentR)) := (errL, errR) then
@@ -471,12 +494,14 @@ private def evalIsoGoal (goal : MVarId) (rules : Array Rule) (lhs rhs : Expr) : 
   -- If the rewritten objects are definitionally equal, we can close the goal.
   -- The proof is `isoL ≪≫ isoR.symm`.
   if ← isDefEq newL newR then
+    trace[CatRw] m!"evalIsoGoal: LHS and RHS matched after rewrite"
     let isoR_symm ← mkSymm isoR
     goal.assign (← mkTrans isoL isoR_symm)
     replaceMainGoal []
   else
     -- Otherwise, we create a intermediate goal `newL ≅ newR`.
     -- The original goal `lhs ≅ rhs` is solved by `isoL ≪≫ (newGoal ≪≫ isoR.symm)`.
+    trace[CatRw] m!"evalIsoGoal: creating intermediate goal {newL} ≅ {newR}"
     let newTarget ← mkAppM ``CategoryTheory.Iso #[newL, newR]
     let newGoal ← mkFreshExprMVar newTarget
     let isoR_symm ← mkSymm isoR
@@ -489,13 +514,16 @@ Handles the case where the goal is NOT an isomorphism (e.g., `IsZero X`).
 Attempts to find a rewrite using `iso_iff` lemmas.
 -/
 private def evalIffGoal (goal : MVarId) (rules : Array Rule) (target : Expr) : TacticM Unit := do
+  trace[CatRw] m!"evalIffGoal: attempting to rewrite goal {target}"
   if let some result ← tryIsoIffLemmasTopDown target rules then
+    trace[CatRw] m!"evalIffGoal: matched top-level iff lemma"
     let newGoal ← mkFreshExprMVar result.newTarget
     goal.assign (← result.mkProof newGoal)
     replaceMainGoal [newGoal.mvarId!]
     return
   -- Fallback to recursive Prop rewriting (e.g. for And)
   if let some result ← rewriteProp rules target then
+    trace[CatRw] m!"evalIffGoal: matched recursive prop rewrite"
     let newGoal ← mkFreshExprMVar result.newProp
     goal.assign (← mkAppM ``Iff.mpr #[result.iff, newGoal])
     replaceMainGoal [newGoal.mvarId!]
@@ -522,6 +550,7 @@ def evalCatRw
   let goal ← getMainGoal
   let target ← instantiateMVars (← getMainTarget)
   let rules ← parseRules rulesStx
+  trace[CatRw] m!"evalCatRw: starting with {rules.size} rules on target {target}"
   evalTarget goal rules target
 
 end CatRw

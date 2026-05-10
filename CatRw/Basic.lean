@@ -1,4 +1,4 @@
-import CatRw.Attr
+import CatRw.Attributes
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
 import Mathlib.CategoryTheory.Functor.EpiMono
@@ -80,36 +80,15 @@ instance : MonadBacktrack Meta.SavedState CatRwM where
   saveState := liftM (saveState : MetaM _)
   restoreState s := liftM (restoreState s : MetaM _)
 
-/--
-The default lemmas tagged with `@[cat_rw]`.
--/
-private def defaultIsoIffLemmas : Array Name := #[
-  ``CategoryTheory.Iso.isZero_iff,
-  ``CategoryTheory.Functor.preservesMonomorphisms.iso_iff,
-  ``CategoryTheory.Functor.preservesEpimorphisms.iso_iff,
-  ``CategoryTheory.Functor.isEquivalence_iff_of_iso,
-  ``CategoryTheory.Functor.initial_natIso_iff
-]
-
 /-- Fetches all `iso_iff` lemmas from the environment. -/
 private def fetchIsoIffLemmas : TacticM (Array Name) := do
   let env ← getEnv
-  return defaultIsoIffLemmas ++ catRwAttr.getDecls env
-
-/--
-The default lemmas tagged with `@[cat_rw_iso]`.
--/
-private def defaultIsoMakerLemmas : Array Name := #[
-  ``CategoryTheory.Functor.mapIso,
-  ``CategoryTheory.Iso.app,
-  ``CategoryTheory.Limits.prod.mapIso,
-  ``CategoryTheory.Limits.coprod.mapIso
-]
+  return catRwAttr.getDecls env
 
 /-- Fetches all `iso_maker` lemmas from the environment. -/
 private def fetchIsoMakerLemmas : MetaM (Array Name) := do
   let env ← getEnv
-  return defaultIsoMakerLemmas ++ catRwIsoAttr.getDecls env
+  return catRwIsoAttr.getDecls env
 
 /--
 Extracts the source and destination objects from an isomorphism's type.

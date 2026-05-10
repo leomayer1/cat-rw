@@ -3,6 +3,7 @@ import CatRw.Attributes
 import CatRw.BasicV2
 import CatRw.ComprehensiveTests
 import CatRw.CoprodTest
+import CatRw.Examples
 import CatRw.FlashyExample
 import CatRw.General
 import CatRw.IsZero

@@ -54,7 +54,3 @@ example {X Y Z : Scheme} (f : X ⟶ Y) (g : Y ⟶ Z) (M N P : Z.Modules) (φ : M
   apply isZero_prod
   · exact Functor.map_isZero _ hN
   exact Functor.map_isZero _ hP
-
-#check pullbackComp
-#check Limits.PreservesLimitPair.iso
-end

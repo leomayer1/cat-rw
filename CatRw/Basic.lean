@@ -315,6 +315,8 @@ private def rewriteManyRaw (lhs : Expr) :
   trace[CatRw] m!"rewriteManyRaw: finished with newExpr = {current}, iso = {finalIso}"
   return ⟨{ newExpr := current, iso := finalIso }, errs⟩
 
+#check LT
+
 /--
 Attempts to apply a specific `iso_iff` lemma to the `target` goal in a top-down fashion.
 -/

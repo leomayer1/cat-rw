@@ -7,7 +7,7 @@ open AlgebraicGeometry CategoryTheory Opposite
 variable {R S : CommRingCat}
 
 set_option linter.style.setOption false
-set_option trace.CatRw false
+set_option trace.CatRw true
 set_option CatRw.trace_iso_expr true
 set_option warn.sorry false
 

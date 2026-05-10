@@ -37,4 +37,7 @@ example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' 
 
 noncomputable
 example (ha : a ≅ a') (hb : b ≅ b') : (a ⨯ b) ⨯ c ≅ (b' ⨯ c) ⨯ a' := by
-  cat_rw [ha, hb, prod.braiding a', prod.associator, prod.braiding a', prod.associator]
+  cat_rw [ha, hb]
+  cat_rw [prod.braiding a']
+  cat_rw [prod.associator]
+  cat_rw [prod.braiding a']

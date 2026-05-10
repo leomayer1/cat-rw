@@ -1,4 +1,5 @@
 import CatRw.Basic
+import CatRw.TagTests
 import Mathlib.CategoryTheory.Limits.Shapes.BinaryProducts
 import Mathlib.CategoryTheory.Limits.Shapes.ZeroObjects
 import Mathlib.CategoryTheory.Functor.EpiMono
@@ -75,8 +76,7 @@ example (X Y Z : C) : (X ⨿ Y) ⨯ Z ≅ (Y ⨿ X) ⨯ Z := by
 noncomputable
 example (G : C ⥤ D) (X Y : C) [PreservesLimit (pair X Y) G] :
     G.obj (X ⨯ Y) ≅ G.obj X ⨯ G.obj Y := by
-  let iso := PreservesLimitPair.iso G X Y
-  cat_rw [iso]
+  cat_rw [PreservesLimitPair.iso G X Y]
 
 /-- Double negation (symm of symm). -/
 example (X Y : C) (h : X ≅ Y) : X ≅ Y := by

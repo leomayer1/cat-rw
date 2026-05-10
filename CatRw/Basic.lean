@@ -390,7 +390,9 @@ private partial def rewriteProp (e : Expr) : CatRwM (Option PropRewriteResult) :
 Handles the case where the goal is an isomorphism `X ≅ Y`.
 Returns a list of new goals.
 -/
-private def evalIsoGoal (goal : MVarId) (lhs rhs : Expr) : CatRwM (Array MVarId) := do
+private def evalIsoGoal
+    (goal : MVarId) (lhs rhs : Expr) (closeIfSolved : Bool := true) :
+    CatRwM (Array MVarId) := do
   trace[CatRw] m!"evalIsoGoal: rewriting {lhs} ≅ {rhs}"
   let resultLhs ← rewriteManyRaw lhs
   let resultRhs ← rewriteManyRaw rhs
@@ -409,7 +411,7 @@ private def evalIsoGoal (goal : MVarId) (lhs rhs : Expr) : CatRwM (Array MVarId)
   let mkSymm (i : Expr) : MetaM Expr := do
     if i.isAppOfArity ``CategoryTheory.Iso.refl 3 then return i
     mkAppM ``CategoryTheory.Iso.symm #[i]
-  if ← isDefEq newL newR then
+  if closeIfSolved && (← isDefEq newL newR) then
     trace[CatRw] m!"evalIsoGoal: LHS and RHS matched after rewrite"
     let isoR_symm ← mkSymm isoR
     goal.assign (← mkTrans isoL isoR_symm)
@@ -449,14 +451,27 @@ private def evalIffGoal (goal : MVarId) (target : Expr) : CatRwM (Array MVarId) 
 Dispatches the tactic based on the goal type.
 Returns a list of new goals.
 -/
-private def evalTarget (goal : MVarId) (target : Expr) : CatRwM (Array MVarId) := do
+private def evalTarget
+    (goal : MVarId) (target : Expr) (closeIfSolved : Bool := true) :
+    CatRwM (Array MVarId) := do
   match_expr target with
-  | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal X Y
+  | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal X Y closeIfSolved
   | _ =>
       let targetWhnf ← whnf target
       match_expr targetWhnf with
-      | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal X Y
+      | CategoryTheory.Iso _ _ X Y => evalIsoGoal goal X Y closeIfSolved
       | _ => evalIffGoal goal target
+
+private def mkContext (rules : Array Rule) : TacticM Context := do
+  let isoMakerLemmas ← fetchIsoMakerLemmas
+  let isoIffLemmas ← fetchIsoIffLemmas
+  return { rules, isoMakerLemmas, isoIffLemmas }
+
+private def evalTargetWithRules
+    (goal : MVarId) (rules : Array Rule) (target : Expr) (closeIfSolved : Bool := true) :
+    TacticM (Array MVarId) := do
+  let ctx ← mkContext rules
+  liftMetaM <| ReaderT.run (evalTarget goal target closeIfSolved) ctx
 
 def evalCatRw
     (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) : TacticM Unit := withMainContext do
@@ -464,19 +479,49 @@ def evalCatRw
   let target ← getMainTarget
   let targetInst ← instantiateMVars target
   let rules ← parseRules rulesStx
-  let isoMakerLemmas ← fetchIsoMakerLemmas
-  let isoIffLemmas ← fetchIsoIffLemmas
-  let ctx := { rules, isoMakerLemmas, isoIffLemmas }
   trace[CatRw] m!"evalCatRw: starting with {rules.size} rules on target {targetInst}"
-  let newGoals ← liftMetaM <| ReaderT.run (evalTarget goal targetInst) ctx
+  let newGoals ← evalTargetWithRules goal rules targetInst
   replaceMainGoal newGoals.toList
+
+private def evalCatRwParsedRule (rule : Rule) (closeIfSolved : Bool) : TacticM Unit :=
+  withMainContext do
+    let goal ← getMainGoal
+    let target ← instantiateMVars (← getMainTarget)
+    let newGoals ← evalTargetWithRules goal #[rule] target closeIfSolved
+    replaceMainGoal newGoals.toList
+
+/--
+Elaborates and applies the rules one at a time so the infoview can display the
+state after each rule, matching the standard `rw` tactic's rule-by-rule feedback.
+The tactic-info ranges intentionally follow `rw`: the initial state is attached
+to `cat_rw [`, and each subsequent state is attached to the rule that produced
+it together with its following separator.
+-/
+def evalCatRwSeq
+    (stx : Syntax) (rulesStx : TSyntax `Lean.Parser.Tactic.rwRuleSeq) : TacticM Unit := do
+  let lbrak := rulesStx.raw[0]!
+  let rulesAndSeps := rulesStx.raw[1]!.getArgs
+  withTacticInfoContext (mkNullNode #[stx[0]!, lbrak]) (pure ())
+  let numRules := (rulesAndSeps.size + 1) / 2
+  if numRules == 0 then
+    evalCatRw rulesStx
+  else
+    for i in [:numRules] do
+      let rule := rulesAndSeps[i * 2]!
+      let isLastRule := i + 1 == numRules
+      let sep := rulesAndSeps.getD (i * 2 + 1) Syntax.missing
+      withTacticInfoContext (mkNullNode #[rule, sep]) do
+        withRef rule do
+          let parsedRule ← parseRule rule
+          withEnableInfoTree false do
+            evalCatRwParsedRule parsedRule isLastRule
 
 end CatRw
 
 /--
 `cat_rw [rules]` performs rewriting using isomorphisms in category theory.
 -/
-elab "cat_rw " rules:rwRuleSeq : tactic => CatRw.evalCatRw rules
+elab stx:"cat_rw " rules:rwRuleSeq : tactic => CatRw.evalCatRwSeq stx rules
 
 /--
 `cat_rw? [rules]` runs `cat_rw [rules]` under `show_term`, printing the generated proof term.

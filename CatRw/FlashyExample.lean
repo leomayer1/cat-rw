@@ -18,11 +18,12 @@ end
 
 noncomputable def spec_prod_iso {R S : CommRingCat} : Spec (R ⨯ S) ≅ Spec R ⨿ Spec S := by
   change Scheme.Spec.obj (op (R ⨯ S)) ≅ Spec R ⨿ Spec S
-  cat_rw [Limits.opProdIsoCoprod R S, Limits.PreservesColimitPair.iso Scheme.Spec ..]
+  cat_rw [Limits.opProdIsoCoprod R S,
+    Limits.PreservesColimitPair.iso Scheme.Spec (op R) (op S)]
 
 noncomputable
 example {R S : CommRingCat} : Scheme.Spec.obj ((op R) ⨿ (op S)) ≅ Spec R ⨿ Spec S := by
-  cat_rw [Limits.PreservesColimitPair.iso Scheme.Spec ..]
+  cat_rw [Limits.PreservesColimitPair.iso Scheme.Spec]
 
 noncomputable
 example {A B : GrpCat} : (forget _).obj (A ⨯ B) ≅ (forget _).obj A ⨯ (forget _).obj B := by
@@ -32,6 +33,22 @@ open Scheme.Modules
 
 #check Limits.PreservesLimitPair.iso
 #check pullbackComp
+
+noncomputable
+example {X Y Z : Scheme} (f : X ⟶ Y) (g : Y ⟶ Z) (M N P : Z.Modules) (φ : M ≅ N)
+    (hN : Limits.IsZero ((pullback g).obj N)) (hP : Limits.IsZero ((pullback g).obj P)) :
+    Limits.IsZero ((pullback (f ≫ g)).obj (M ⨯ P)) := (Iso.isZero_iff
+          ((pullback (f ≫ g)).mapIso (Limits.prod.mapIso φ (Iso.refl P)))).mpr
+      ((Iso.isZero_iff ((pullbackComp f g).symm.app (N ⨯ P))).mpr
+        (id
+          ((Iso.isZero_iff
+                ((pullback f).mapIso (Limits.PreservesLimitPair.iso (pullback g) N P))).mpr
+            ((Iso.isZero_iff
+                  (Limits.PreservesLimitPair.iso (pullback f) ((pullback g).obj N)
+                    ((pullback g).obj P))).mpr
+              (isZero_prod ((pullback f).obj ((pullback g).obj N))
+                ((pullback f).obj ((pullback g).obj P)) (Functor.map_isZero (pullback f) hN)
+                (Functor.map_isZero (pullback f) hP))))))
 
 noncomputable
 example {X Y Z : Scheme} (f : X ⟶ Y) (g : Y ⟶ Z) (M N P : Z.Modules) (φ : M ≅ N)

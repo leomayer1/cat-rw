@@ -14,8 +14,9 @@ variable (a a' b b' c : C)
 example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
   cat_rw [h, h']
 
-example (h : a ≅ b) (h' : b ≅ c) : a ≅ c := by
-  cat_rw? [h, h']
+example (φ : a ≅ b) (h : IsZero (b ⨯ c)) : IsZero (a ⨯ c) := by
+  refine (Iso.isZero_iff (prod.mapIso φ (Iso.refl c))).mpr ?_
+  exact h
 
 noncomputable example (φ : a ≅ b) : a ⨯ c ≅ c ⨯ b := by
   cat_rw [φ, prod.braiding b c]

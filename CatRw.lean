@@ -1,13 +1,8 @@
 import CatRw.Attr
 import CatRw.Attributes
 import CatRw.BasicV2
-import CatRw.ComprehensiveTests
-import CatRw.CoprodTest
 import CatRw.Examples
 import CatRw.FlashyExample
-import CatRw.General
-import CatRw.IsZero
 import CatRw.Tag
 import CatRw.TagTests
 import CatRw.Tests
-import CatRw.V2Tests

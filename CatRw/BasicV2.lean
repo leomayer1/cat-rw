@@ -146,12 +146,6 @@ def getRelInfo? (relations : NameMap RelInfo) (type : Expr) :
     return some (r, args[args.size - 2]!, args[args.size - 1]!)
   return none
 
-/-- Indented tracing for the `grw` algorithm. -/
-def traceM (msg : MessageData) : CatRwM2 Unit := do
-  let ctx ← read
-  let indent := String.replicate (ctx.depth * 2) ' '
-  trace[CatRw] m!"{indent}{msg}"
-
 /-- Instantiates a lemma with fresh level metavariables and performs a telescope. -/
 private def withLemma (lemmaName : Name) (k : Array Expr → Expr → CatRwM2 (Option α)) :
     CatRwM2 (Option α) := do
@@ -198,10 +192,10 @@ private def tryMatchRule (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote)
       if ctx.config.occs.contains s.occCount then
         let proof ← instantiateMVars (← solveInstances ctx.rule.proof)
         let rhs ← instantiateMVars (← solveInstances ctx.rule.rhs)
-        traceM m!"matched rule: {ctx.rule.lhs} -> {rhs} (occ {s.occCount})"
+        trace[CatRw] m!"matched rule: {ctx.rule.lhs} -> {rhs} (occ {s.occCount})"
         return some { expr' := rhs, proof }
       else
-        traceM m!"matched rule but skipped (occ {s.occCount})"
+        trace[CatRw] m!"matched rule but skipped (occ {s.occCount})"
   return none
 
 mutual
@@ -211,21 +205,22 @@ The generalized rewrite function.
 Traverses the expression tree and applies rules or lifting lemmas.
 -/
 partial def grw (r_out : Name) (expr : Expr) : CatRwM2 (Option Rewrote) := do
-  let ctx ← read
-  if ctx.depth > 20 then return none
   let expr ← instantiateMVars expr
   if expr.isMVar then return none
-  traceM m!"grw {r_out} on {expr}"
-  -- 1. Try if rule matches expr
-  if let some res ← tryMatchRule r_out expr then return some res
-  -- 2. Try lifting lemmas
-  for lemmaName in ctx.isoMakerLemmas do
-    let state ← saveState
-    try
-      if let some res ← tryApplyLemma lemmaName r_out expr then return some res
-      restoreState state
-    catch _ => restoreState state
-  return none
+  withTraceNode `CatRw (fun _ => do
+    return m!"grw {r_out} on {expr}") do
+    let ctx ← read
+    if ctx.depth > 20 then return none
+    -- 1. Try if rule matches expr
+    if let some res ← tryMatchRule r_out expr then return some res
+    -- 2. Try lifting lemmas
+    for lemmaName in ctx.isoMakerLemmas do
+      let state ← saveState
+      try
+        if let some res ← tryApplyLemma lemmaName r_out expr then return some res
+        restoreState state
+      catch _ => restoreState state
+    return none
 
 /-- Attempts to apply a specific lifting lemma to the expression. -/
 private partial def tryApplyLemma (lemmaName : Name) (r_out : Name) (expr : Expr) :
@@ -255,7 +250,7 @@ private partial def tryApplyLemma (lemmaName : Name) (r_out : Name) (expr : Expr
         proof ← relInfo.applySymm proof
       let rhsInst ← instantiateMVars (← solveInstances rhsFinal)
       let proofInst ← instantiateMVars proof
-      traceM m!"applied {lemmaName}: {expr} -> {rhsInst}"
+      trace[CatRw] m!"applied {lemmaName}: {expr} -> {rhsInst}"
       return some { expr' := rhsInst, proof := proofInst }
     return none
 
@@ -305,70 +300,71 @@ private def rewriteTarget (r : Name) (lhs rhs : Expr) :
 /-- Dispatches the rewrite based on whether it's the goal or a hypothesis. -/
 def evalRewrite (goal : MVarId) (fvarId? : Option FVarId) :
     CatRwM2 (Array MVarId × Option FVarId × Bool) := do
-  let ctx ← read
   let target ← if let some fvarId := fvarId? then fvarId.getType else goal.getType
   let target ← instantiateMVars target
-  traceM m!"evalRewrite at {fvarId?.map mkFVar |>.getD (mkConst ``none)}: {target}"
-  if let some (r, lhs, rhs) ← getRelInfo? ctx.relations target then
-    let relInfo := ctx.relations.find? r |>.get!
-    let (newLhs, newRhs, lp?, rp?, rewrote) ← rewriteTarget r lhs rhs
-    if !rewrote then return (#[goal], fvarId?, false)
-    if let some fvarId := fvarId? then
-      -- Hypothesis case: h : lhs ≅ rhs
-      -- We replace it with: lp.symm ≫ h ≫ rp : newLhs ≅ newRhs
-      let mut proof := mkFVar fvarId
-      if let some rp := rp? then proof ← relInfo.applyTrans proof rp
-      if let some lp := lp? then
-        let lp_symm ← relInfo.applySymm lp
-        proof ← relInfo.applyTrans lp_symm proof
-      let newTarget ← mkAppM r #[newLhs, newRhs]
-      let res ← goal.replace fvarId proof newTarget
-      return (#[res.mvarId], some res.fvarId, true)
-    else
-      -- Goal case: ⊢ lhs ≅ rhs
-      -- We replace it with: ⊢ newLhs ≅ newRhs
-      -- The proof for the old goal is: lp ≫ new_goal ≫ rp.symm
-      if ← withReducible (isDefEq newLhs newRhs) then
-        let mut proof ← relInfo.mkRefl newLhs
-        if let some lp := lp? then proof ← relInfo.applyTrans lp proof
-        if let some rp := rp? then
-          let rp_symm ← relInfo.applySymm rp
-          proof ← relInfo.applyTrans proof rp_symm
-        goal.assign (← solveInstances proof)
-        return (#[], none, true)
-      else
-        let newTarget ← mkAppM r #[newLhs, newRhs]
-        let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
-        let mut proof := newGoal
-        if let some rp := rp? then
-          let rp_symm ← relInfo.applySymm rp
-          proof ← relInfo.applyTrans proof rp_symm
-        if let some lp := lp? then
-          proof ← relInfo.applyTrans lp proof
-        goal.assign (← solveInstances proof)
-        return (#[newGoal.mvarId!], none, true)
-  else
-    -- Prop case: Goal ⊢ P or Hyp h : P. We use Iff to transform.
-    let r_iff := ``Iff
-    let relInfo := ctx.relations.find? r_iff |>.get!
-    if let some res ← grw r_iff target then
-      if ← relInfo.isRefl res.proof then return (#[goal], fvarId?, false)
+  let loc := fvarId?.map mkFVar |>.getD (mkConst ``none)
+  withTraceNode `CatRw (fun _ => return m!"evalRewrite at {loc}: {target}") do
+    let ctx ← read
+    if let some (r, lhs, rhs) ← getRelInfo? ctx.relations target then
+      let relInfo := ctx.relations.find? r |>.get!
+      let (newLhs, newRhs, lp?, rp?, rewrote) ← rewriteTarget r lhs rhs
+      if !rewrote then return (#[goal], fvarId?, false)
       if let some fvarId := fvarId? then
-        -- Hyp case: h : P, res.proof : P ↔ Q. New hyp: res.proof.mp h : Q
-        let newProof ← mkAppM ``Iff.mp #[res.proof, mkFVar fvarId]
-        let res ← goal.replace fvarId newProof res.expr'
+        -- Hypothesis case: h : lhs ≅ rhs
+        -- We replace it with: lp.symm ≫ h ≫ rp : newLhs ≅ newRhs
+        let mut proof := mkFVar fvarId
+        if let some rp := rp? then proof ← relInfo.applyTrans proof rp
+        if let some lp := lp? then
+          let lp_symm ← relInfo.applySymm lp
+          proof ← relInfo.applyTrans lp_symm proof
+        let newTarget ← mkAppM r #[newLhs, newRhs]
+        let res ← goal.replace fvarId proof newTarget
         return (#[res.mvarId], some res.fvarId, true)
       else
-        -- Goal case: ⊢ P, res.proof : P ↔ Q. New goal: ⊢ Q
-        if ← withReducible (isDefEq (← instantiateMVars res.expr') (mkConst ``True)) then
-          let proof ← mkAppM ``Iff.mpr #[res.proof, mkConst ``True.intro]
+        -- Goal case: ⊢ lhs ≅ rhs
+        -- We replace it with: ⊢ newLhs ≅ newRhs
+        -- The proof for the old goal is: lp ≫ new_goal ≫ rp.symm
+        if ← withReducible (isDefEq newLhs newRhs) then
+          let mut proof ← relInfo.mkRefl newLhs
+          if let some lp := lp? then proof ← relInfo.applyTrans lp proof
+          if let some rp := rp? then
+            let rp_symm ← relInfo.applySymm rp
+            proof ← relInfo.applyTrans proof rp_symm
           goal.assign (← solveInstances proof)
           return (#[], none, true)
-        let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
-        let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
-        goal.assign (← solveInstances proof)
-        return (#[newGoal.mvarId!], none, true)
-    return (#[goal], fvarId?, false)
+        else
+          let newTarget ← mkAppM r #[newLhs, newRhs]
+          let newGoal ← mkFreshExprMVar (← instantiateMVars newTarget)
+          let mut proof := newGoal
+          if let some rp := rp? then
+            let rp_symm ← relInfo.applySymm rp
+            proof ← relInfo.applyTrans proof rp_symm
+          if let some lp := lp? then
+            proof ← relInfo.applyTrans lp proof
+          goal.assign (← solveInstances proof)
+          return (#[newGoal.mvarId!], none, true)
+    else
+      -- Prop case: Goal ⊢ P or Hyp h : P. We use Iff to transform.
+      let r_iff := ``Iff
+      let relInfo := ctx.relations.find? r_iff |>.get!
+      if let some res ← grw r_iff target then
+        if ← relInfo.isRefl res.proof then return (#[goal], fvarId?, false)
+        if let some fvarId := fvarId? then
+          -- Hyp case: h : P, res.proof : P ↔ Q. New hyp: res.proof.mp h : Q
+          let newProof ← mkAppM ``Iff.mp #[res.proof, mkFVar fvarId]
+          let res ← goal.replace fvarId newProof res.expr'
+          return (#[res.mvarId], some res.fvarId, true)
+        else
+          -- Goal case: ⊢ P, res.proof : P ↔ Q. New goal: ⊢ Q
+          if ← withReducible (isDefEq (← instantiateMVars res.expr') (mkConst ``True)) then
+            let proof ← mkAppM ``Iff.mpr #[res.proof, mkConst ``True.intro]
+            goal.assign (← solveInstances proof)
+            return (#[], none, true)
+          let newGoal ← mkFreshExprMVar (← instantiateMVars res.expr')
+          let proof ← mkAppM ``Iff.mpr #[res.proof, newGoal]
+          goal.assign (← solveInstances proof)
+          return (#[newGoal.mvarId!], none, true)
+      return (#[goal], fvarId?, false)
 
 /-- Parses a user-provided rewrite rule. -/
 private def parseRuleV2 (stx : Syntax) : TacticM RuleV2 := do

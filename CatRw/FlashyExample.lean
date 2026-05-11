@@ -15,8 +15,7 @@ set_option warn.sorry false
 
 noncomputable def spec_prod_iso {R S : CommRingCat} : Spec (R ⨯ S) ≅ Spec R ⨿ Spec S := by
   change Scheme.Spec.obj (op (R ⨯ S)) ≅ Spec R ⨿ Spec S
-  cat_rw [Limits.opProdIsoCoprod R S]
-  cat_rw [← Limits.PreservesColimitPair.iso Scheme.Spec (op R) (op S)]
+  cat_rw [Limits.opProdIsoCoprod R S, ← Limits.PreservesColimitPair.iso Scheme.Spec (op R) (op S)]
   exact Iso.refl _
 
 
